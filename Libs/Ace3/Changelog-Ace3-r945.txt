@@ -1,0 +1,67 @@
+------------------------------------------------------------------------
+r945 | nevcairiel | 2010-06-27 09:01:12 +0000 (Sun, 27 Jun 2010) | 1 line
+Changed paths:
+   M /trunk/AceTab-3.0/AceTab-3.0.lua
+
+AceTab-3.0: Dynamically create the list of editboxes based on NUM_CHAT_WINDOWS
+------------------------------------------------------------------------
+r944 | nevcairiel | 2010-06-27 08:53:25 +0000 (Sun, 27 Jun 2010) | 1 line
+Changed paths:
+   M /trunk/AceTab-3.0/AceTab-3.0.lua
+
+AceTab-3.0: Make this thing "work" with 3.3.3 and 3.3.5
+------------------------------------------------------------------------
+r943 | nevcairiel | 2010-06-26 07:58:49 +0000 (Sat, 26 Jun 2010) | 1 line
+Changed paths:
+   M /trunk/AceGUI-3.0/widgets/AceGUIWidget-Keybinding.lua
+
+AceGUI-3.0: Keybinding: Fix button height
+------------------------------------------------------------------------
+r942 | nevcairiel | 2010-06-20 10:27:11 +0000 (Sun, 20 Jun 2010) | 1 line
+Changed paths:
+   M /trunk/AceGUI-3.0/widgets/AceGUIWidget-Keybinding.lua
+   M /trunk/AceGUI-3.0/widgets/AceGUIWidget-Slider.lua
+
+AceGUI-3.0: Cleanup keybinding and slider widgets
+------------------------------------------------------------------------
+r941 | nevcairiel | 2010-06-19 12:18:22 +0000 (Sat, 19 Jun 2010) | 1 line
+Changed paths:
+   M /trunk/AceGUI-3.0/widgets/AceGUIWidget-CheckBox.lua
+
+AceGUI-3.0: CheckBox: Fix alignment of the text in OnMouseDown when an image is set. (Ticket #142)
+------------------------------------------------------------------------
+r940 | nevcairiel | 2010-06-19 08:01:47 +0000 (Sat, 19 Jun 2010) | 1 line
+Changed paths:
+   M /trunk/AceDB-3.0/AceDB-3.0.lua
+   M /trunk/tests/AceDB-3.0-namespaces.lua
+
+AceDB-3.0: Switch all functions over to the dynamic "self.profiles" proxy instead of using sv.profiles directly, which may not always exist (Ticket #144)
+------------------------------------------------------------------------
+r939 | nevcairiel | 2010-06-19 07:26:17 +0000 (Sat, 19 Jun 2010) | 3 lines
+Changed paths:
+   M /trunk/AceConfig-3.0/AceConfigDialog-3.0/AceConfigDialog-3.0.lua
+
+AceConfigDialog-3.0: Improve min/max/step logic for slider controls.
+
+Step checking is now always performed when at least min is specified, and min/max checking is independent of each other.
+------------------------------------------------------------------------
+r938 | nevcairiel | 2010-06-13 07:21:38 +0000 (Sun, 13 Jun 2010) | 1 line
+Changed paths:
+   M /trunk/AceDBOptions-3.0/AceDBOptions-3.0.lua
+
+AceDBOptions-3.0.lua: Fix a string typo (Ticket #141 - Thanks Allara)
+------------------------------------------------------------------------
+r937 | nevcairiel | 2010-06-03 17:54:06 +0000 (Thu, 03 Jun 2010) | 1 line
+Changed paths:
+   M /trunk/AceGUI-3.0/widgets/AceGUIWidget-Slider.lua
+
+AceGUI-3.0: Slider: Fire OnValueChanged as well as OnMouseUp when confirming a value in the slider editbox.
+------------------------------------------------------------------------
+r936 | nevcairiel | 2010-05-16 11:58:37 +0000 (Sun, 16 May 2010) | 1 line
+Changed paths:
+   M /trunk/AceGUI-3.0/widgets/AceGUIWidget-Icon.lua
+   M /trunk/AceGUI-3.0/widgets/AceGUIWidget-InteractiveLabel.lua
+   M /trunk/AceGUI-3.0/widgets/AceGUIWidget-Label.lua
+
+AceGUI-3.0: Minor cleanups
+------------------------------------------------------------------------
