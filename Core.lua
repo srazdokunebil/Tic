@@ -44,7 +44,7 @@ local defaults = {
     -- Minimap button defaults
     mm = { shown = true, angle = 200, radius = 78 },
 
-    specType = "rdps",
+    specType = nil,
 
     debugEvents = false,
     debugOnUpdate = false,
@@ -303,59 +303,105 @@ function Tic:ActivateSpecByIndex(i)
 end
 
 function Tic:OnEnable()
-  -- Events you can keep or replace
+  ------------------------------------------------------------
+  -- 1) Events you can keep or replace
+  ------------------------------------------------------------
   self:RegisterEvent("UI_SCALE_CHANGED", "_OnScaleChanged")
   self:RegisterEvent("PLAYER_ENTERING_WORLD", "_OnScaleChanged")
   self:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 
-  -- Start pixel module
+  ------------------------------------------------------------
+  -- 2) Pixels (beacons)
+  ------------------------------------------------------------
   self.Pixel = self.Pixel or Tic_Pixels:New(self)
   self.Pixel:ApplyAll()  -- build frames & place them
 
-  -- Optional OnUpdate logger
-  if not self._updateFrame then
-    self._updateFrame = CreateFrame("Frame", "TicUpdateFrame")
-    self._updateAccum = 0
-    self._updateFrame:SetScript("OnUpdate", function(_, elapsed)
-      self._updateAccum = self._updateAccum + elapsed
-      local thr = self.db.profile.throttle
-      if self._updateAccum >= thr then
-        --if self.db.profile.debugOnUpdate then self:Printf("[OnUpdate] tick (Δ=%.3f)", self._updateAccum) end
-        self._updateAccum = 0
+  ------------------------------------------------------------
+  -- 3) Detect class and set dynamic default spec (first for class)
+  ------------------------------------------------------------
+  local displayName, token = UnitClass("player")  -- e.g., "Druid", "DRUID"
+  self.playerClass = token
+
+  -- Only choose a default if nothing is saved yet (fresh profile)
+  if not self.db.profile.specType or self.db.profile.specType == "" then
+    local firstSpec
+
+    -- Case A: map-style table: Tic.ClassSpecs["DRUID"] = { "heal","mdps","rdps","tank" }
+    if type(self.ClassSpecs) == "table" and self.ClassSpecs[token] and type(self.ClassSpecs[token]) == "table" then
+      firstSpec = self.ClassSpecs[token][1]
+
+    else
+      -- Case B: list-style table: Tic:ClassSpecs = { { class="Druid", specs={...} }, ... }
+      local list = self.ClassSpecs or self["ClassSpecs"] or self["ClassSpecsList"] or self["ClassSpecsArray"]
+      if type(list) == "table" then
+        for _, entry in ipairs(list) do
+          if entry.class == displayName and type(entry.specs) == "table" then
+            firstSpec = entry.specs[1]
+            break
+          end
+        end
       end
-    end)
+    end
+
+    if firstSpec and firstSpec ~= "" then
+      self.db.profile.specType = firstSpec
+      self:Printf("No saved spec; defaulting to [%s] for class [%s].", firstSpec, token)
+    else
+      self.db.profile.specType = "auto"
+      self:Printf("No saved spec and no class spec list found; using [auto].")
+    end
   end
 
-  -- Class bootstrap
-  self.playerClass = self:GetPlayerClass()             -- e.g., "DRUID"
-  if self.InitForClass then self:InitForClass(self.playerClass) end
+  ------------------------------------------------------------
+  -- 4) Class bootstrap (bindings and spec toggles defined in your inits)
+  ------------------------------------------------------------
+  if self.InitForClass then
+    self:InitForClass(self.playerClass)   -- tries spec-specific init first if you implemented that logic
+  end
 
-  -- Build/refesh the UI after class/spec init so it appears on login/reload
-  self:UIBuild()
-
-  -- Minimap button
-  self:Minimap_Create()
-
-  -- OnUpdate dispatcher for rotations
+  ------------------------------------------------------------
+  -- 5) Rotation OnUpdate dispatcher (ensure frame is shown)
+  ------------------------------------------------------------
   if not self._rotFrame then
     self._rotFrame = CreateFrame("Frame", "TicRotationFrame")
     self._rotFrame:SetScript("OnUpdate", function(_, elapsed)
       if self.UpdateForClass then self:UpdateForClass(elapsed) end
     end)
-    self._rotFrame:Show()
   end
+  self._rotFrame:Show()
 
-  -- reset HUD
-  if self.db.profile.uiEnabled and (not self.ui or not self.ui.frame) then
-    self:UIResetAll()
+  ------------------------------------------------------------
+  -- 6) Optional OnUpdate logger (kept from earlier)
+  ------------------------------------------------------------
+  if not self._updateFrame then
+    self._updateFrame = CreateFrame("Frame", "TicUpdateFrame")
+    self._updateAccum = 0
+    self._updateFrame:SetScript("OnUpdate", function(_, elapsed)
+      self._updateAccum = self._updateAccum + elapsed
+      local thr = self.db.profile.throttle or 0.10
+      if self._updateAccum >= thr then
+        if self.db.profile.debugOnUpdate then
+          -- self:Printf("[OnUpdate] tick (Δ=%.3f)", self._updateAccum)
+        end
+        self._updateAccum = 0
+      end
+    end)
   end
-
-  self:Printf("Class: %s", tostring(self.playerClass or "?"))
-
   self:_RefreshOnUpdateVisibility()
 
-  self:Printf("Loaded. /tic options  |  /tic px help")
+  ------------------------------------------------------------
+  -- 7) UI/HUD and Minimap
+  ------------------------------------------------------------
+  self:UIBuild()         -- builds and shows if uiEnabled=true (persisted)
+  self:Minimap_Create()  -- minimap button (creates once; applies saved angle/visibility)
+
+  ------------------------------------------------------------
+  -- 8) Final console notes
+  ------------------------------------------------------------
+  self:Printf("Class: %s  |  Spec: %s", tostring(self.playerClass or "?"), tostring(self.db.profile.specType or "auto"))
+  self:Printf("Loaded. /tic options  |  /tic ui  |  /tic spec")
 end
+
 
 function Tic:OnDisable()
   if self._updateFrame then self._updateFrame:Hide() end

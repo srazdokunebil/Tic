@@ -35,6 +35,23 @@ function Tic:_Init_DRUID()
   self._classInited.DRUID = true
 end
 
+-- WARLOCK init (binds spells -> CTRL+1..)
+function Tic:_Init_WARLOCK()
+  if self._classInited.WARLOCK then return end
+  self:Printf("warlock class initializing buttons")
+  tic_bind_key("Corruption")
+  tic_bind_key("Shadow Bolt")
+
+  -- Make these appear as toggles in the UI (enable/disable per spell)
+  self:RegisterSpecToggles({
+    "Corruption",
+    "Shadow Bolt",
+  })
+
+  self._classInited.WARLOCK = true
+end
+
+
 -- Other classes (stubs)
 function Tic:_Init_DEATHKNIGHT() if self._classInited.DEATHKNIGHT then return end; self._classInited.DEATHKNIGHT = true end
 function Tic:_Init_HUNTER()      if self._classInited.HUNTER      then return end; self._classInited.HUNTER = true end
@@ -107,6 +124,31 @@ function Tic:_Update_DRUID(elapsed)
     end
   elseif self.db.profile.specType == "tank" then
     Tic:ClearPixels()
+  end
+
+  -- add your other conditions…
+end
+
+-- WARLOCK per-frame rotation (YOUR logic)
+function Tic:_Update_WARLOCK(elapsed)
+  -- Loud print so you can confirm it runs
+  if self.db.profile.debug then print("warlock spec:"..tostring(self.db.profile.specType)) end
+
+  if self.db.profile.specType == "dsr" then
+    Tic:ClearPixels()
+  elseif self.db.profile.specType == "md" then
+    Tic:ClearPixels()
+  elseif self.db.profile.specType == "sm" then
+    if not self:IsValidAttackableTarget() then Tic:ClearPixels() return end
+    local hasCorruption = UnitDebuff("target", "Corruption")
+    if not hasCorruption then
+      Tic_castSpellByName("Corruption")
+    elseif hasCorruption then
+      Tic_castSpellByName("Shadow Bolt")
+      return
+    else
+      Tic:ClearPixels()
+    end
   end
 
   -- add your other conditions…
