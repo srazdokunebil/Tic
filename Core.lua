@@ -243,13 +243,34 @@ function Tic:OnDisable()
   if self.Pixel then self.Pixel:Show(false) end
 end
 
--- Demo handler (replace with your own logic)
-function Tic:COMBAT_LOG_EVENT_UNFILTERED()
-  -- Example: blink gate during combat aura applied/removed (debug only)
-  if not self.db.profile.debug then return end
-  local _, sub = CombatLogGetCurrentEventInfo()
-  if sub == "SPELL_AURA_APPLIED" then self.Pixel:SetGate(true)
-  elseif sub == "SPELL_AURA_REMOVED" then self.Pixel:SetGate(false) end
+-- AceEvent calls methods as: self:EVENT(eventName, ...)
+function Tic:COMBAT_LOG_EVENT_UNFILTERED(event, ...)
+  local ts, subEvent, hideCaster,
+        srcGUID, srcName, srcFlags, srcRaidFlags,
+        dstGUID, dstName, dstFlags, dstRaidFlags,
+        spellId, spellName, spellSchool, auraType
+
+  if self.db.profile.debug then self:Printf("CLEU: %s", tostring((select(2, ...) or "???"))) end
+
+  if CombatLogGetCurrentEventInfo then
+    -- retail+ style
+    ts, subEvent, hideCaster,
+    srcGUID, srcName, srcFlags, srcRaidFlags,
+    dstGUID, dstName, dstFlags, dstRaidFlags,
+    spellId, spellName, spellSchool, auraType = CombatLogGetCurrentEventInfo()
+  else
+    -- 3.3.5 style: the event args are passed directly
+    ts, subEvent, hideCaster,
+    srcGUID, srcName, srcFlags, srcRaidFlags,
+    dstGUID, dstName, dstFlags, dstRaidFlags,
+    spellId, spellName, spellSchool, auraType = ...
+  end
+
+  -- your logic:
+  if (subEvent == "SPELL_AURA_APPLIED" or subEvent == "SPELL_AURA_REMOVED")
+     and dstGUID == UnitGUID("player") and self.db.profile.debug then
+    self:Printf("%s %s (%d) on player", subEvent, spellName or "?", spellId or 0)
+  end
 end
 
 -- Scale change -> re-place for pixel-perfect alignment

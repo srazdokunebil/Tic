@@ -39,20 +39,24 @@ end
 
 -- ---- Per-frame rotation updaters (stubs) ----
 function Tic:_Update_DRUID(elapsed)
-  print("aaaaaaaaaaaaaaaaaaaaaaaaaaa")
-  -- if Tic:IsValidAttackableTarget() then
-  --   local hasFaerieFire, _, _, _, _, _, expireFaerieFire = UnitDebuff("target", "Faerie Fire")
-	-- 	local hasInsectSwarm, _, _, _, _, _, expireInsectSwarm = UnitDebuff("target", "Insect Swarm")
-	-- 	local hasMoonfire, _, _, _, _, _, expireMoonfire = UnitDebuff("target", "Moonfire")
-	-- 	local haveLunarEclipse, _, _, _, _, _, expireLunarEclipse = UnitBuff("player", "Eclipse (Lunar)")
-	-- 	local haveSolarEclipse, _, _, _, _, _, expireSolarEclipse = UnitBuff("player", "Eclipse (Solar)")
-	-- 	local starfallReady = Tic:IsSpellReady("Starfall")
+  --print("aaaaaaaaaaaaaaaaaaaaaaaaaaa")
+  if Tic:IsValidAttackableTarget() then
+    local hasFaerieFire, _, _, _, _, _, expireFaerieFire = UnitDebuff("target", "Faerie Fire")
+		local hasInsectSwarm, _, _, _, _, _, expireInsectSwarm = UnitDebuff("target", "Insect Swarm")
+		local hasMoonfire, _, _, _, _, _, expireMoonfire = UnitDebuff("target", "Moonfire")
+		local haveLunarEclipse, _, _, _, _, _, expireLunarEclipse = UnitBuff("player", "Eclipse (Lunar)")
+		local haveSolarEclipse, _, _, _, _, _, expireSolarEclipse = UnitBuff("player", "Eclipse (Solar)")
+		local starfallReady = Tic:IsSpellReady("Starfall")
 
-  --   if not hasMoonfire then
-  --     Tic_castSpellByName("Moonfire")
-  --   end
+    if not hasMoonfire then
+      Tic_castSpellByName("Moonfire")
+		elseif not hasInsectSwarm then --and ouch_castSpellByName("Insect Swarm") then
+			--OuchLog("[DRU] 2.2 Insect Swarm")
+			Tic_castSpellByName("Insect Swarm")
+			return
+    end
+  end
 
-  -- end
   -- Example logic (very naive demo):
   -- if need to refresh Moonfire -> signal that one:
   -- Tic_castSpellByName("Moonfire")
