@@ -41,6 +41,9 @@ local defaults = {
     uiIcon    = 32,     -- icon size (px)
     uiPos = { point = "CENTER", rel = "CENTER", x = 0, y = 0 },
 
+    -- Minimap button defaults
+    mm = { shown = true, angle = 200, radius = 78 },
+
     specType = "rdps",
 
     debugEvents = false,
@@ -329,6 +332,9 @@ function Tic:OnEnable()
 
   -- Build/refesh the UI after class/spec init so it appears on login/reload
   self:UIBuild()
+
+  -- Minimap button
+  self:Minimap_Create()
 
   -- OnUpdate dispatcher for rotations
   if not self._rotFrame then
@@ -646,6 +652,137 @@ end
 --   self.db.profile.uiLocked  = false
 --   self:Printf("UI reset to screen center. (Unlocked)")
 -- end
+
+-- ========= Minimap Button (3.3.5) =========
+local cos, sin, rad = math.cos, math.sin, math.rad
+
+function Tic:Minimap_SetPosition(angle)
+  self.db.profile.mm.angle = angle
+  if not self.mm or not self.mm.btn then return end
+  local r = self.db.profile.mm.radius or 78
+  local x = cos(rad(angle)) * r
+  local y = sin(rad(angle)) * r
+  self.mm.btn:ClearAllPoints()
+  self.mm.btn:SetPoint("CENTER", Minimap, "CENTER", x, y)
+end
+
+function Tic:Minimap_Show(show)
+  self.db.profile.mm.shown = (show == nil) and true or not not show
+  if self.mm and self.mm.btn then
+    if self.db.profile.mm.shown then self.mm.btn:Show() else self.mm.btn:Hide() end
+  end
+end
+
+function Tic:Minimap_ToggleUI()
+  self.db.profile.uiEnabled = not self.db.profile.uiEnabled
+  self:UIBuild()
+  self:Printf("UI %s", self.db.profile.uiEnabled and "shown" or "hidden")
+end
+
+-- Right-click dropdown
+function Tic:Minimap_InitMenu()
+  if self.mm and self.mm.menu then return end
+  self.mm = self.mm or {}
+  local dd = CreateFrame("Frame", "TicMiniMapDropDown", UIParent, "UIDropDownMenuTemplate")
+  dd.displayMode = "MENU"
+  self.mm.menu = dd
+end
+
+function Tic:Minimap_OpenMenu(anchor)
+  self:Minimap_InitMenu()
+  local menu = {
+    { text = "Tic", isTitle = true, notCheckable = true },
+    { text = (self.db.profile.uiEnabled and "Hide UI" or "Show UI"),
+      notCheckable = true,
+      func = function() Tic:Minimap_ToggleUI(); CloseDropDownMenus() end },
+    { text = "Options…",
+      notCheckable = true,
+      func = function()
+        if Tic.optionsFrame then
+          InterfaceOptionsFrame_OpenToCategory(Tic.optionsFrame)
+          InterfaceOptionsFrame_OpenToCategory(Tic.optionsFrame) -- twice for 3.3.5 focus quirk
+        end
+        CloseDropDownMenus()
+      end },
+    { text = "Hide Minimap Button",
+      notCheckable = true,
+      func = function() Tic:Minimap_Show(false); CloseDropDownMenus() end },
+    { text = "Cancel", notCheckable = true },
+  }
+
+  EasyMenu(menu, self.mm.menu, anchor or "cursor", 0, 0, "MENU", 2)
+end
+
+-- Create the minimap button
+function Tic:Minimap_Create()
+  self.mm = self.mm or {}
+  if self.mm.btn then return end
+
+  local b = CreateFrame("Button", "TicMinimapButton", Minimap)
+  b:SetFrameStrata("MEDIUM")
+  b:SetSize(32, 32)
+  b:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
+
+  local overlay = b:CreateTexture(nil, "OVERLAY")
+  overlay:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+  overlay:SetSize(56, 56)
+  overlay:SetPoint("TOPLEFT")
+
+  local icon = b:CreateTexture(nil, "BACKGROUND")
+  icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") -- replace with your icon if you want
+  icon:SetSize(20, 20)
+  icon:SetPoint("CENTER", 0, 0)
+  b.icon = icon
+
+  -- Click behavior
+  b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  b:SetScript("OnClick", function(_, btn)
+    if btn == "LeftButton" then
+      Tic:Minimap_ToggleUI()
+    else
+      Tic:Minimap_OpenMenu(b)
+    end
+  end)
+
+  -- Shift-drag to move around rim
+  b:RegisterForDrag("LeftButton")
+  b:SetScript("OnDragStart", function(selfBtn)
+    if IsShiftKeyDown() then selfBtn:SetScript("OnUpdate", function() Tic:Minimap_OnDragging(selfBtn) end) end
+  end)
+  b:SetScript("OnDragStop", function(selfBtn)
+    selfBtn:SetScript("OnUpdate", nil)
+  end)
+
+  -- Tooltip
+  b:SetScript("OnEnter", function(selfBtn)
+    GameTooltip:SetOwner(selfBtn, "ANCHOR_LEFT")
+    GameTooltip:SetText("Tic", 1,1,1)
+    GameTooltip:AddLine("Left-click: Show/Hide UI", 0.8,0.8,0.8)
+    GameTooltip:AddLine("Right-click: Menu", 0.8,0.8,0.8)
+    GameTooltip:AddLine("Shift-drag to move", 0.8,0.8,0.8)
+    GameTooltip:Show()
+  end)
+  b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+  self.mm.btn = b
+  -- position & visibility from saved vars
+  self:Minimap_SetPosition(self.db.profile.mm.angle or 200)
+  self:Minimap_Show(self.db.profile.mm.shown ~= false)
+end
+
+-- Calculate angle while dragging
+function Tic:Minimap_OnDragging(btn)
+  local mx, my = Minimap:GetCenter()
+  local px, py = GetCursorPosition()
+  local scale = Minimap:GetEffectiveScale()
+  px, py = px / scale, py / scale
+  local dx, dy = px - mx, py - my
+  local angle = math.deg(math.atan2(dy, dx))
+  if angle < 0 then angle = angle + 360 end
+  self:Minimap_SetPosition(angle)
+end
+-- ========= /Minimap Button =========
+
 
 local function SetVisible(region, state)
   if state then region:Show() else region:Hide() end
