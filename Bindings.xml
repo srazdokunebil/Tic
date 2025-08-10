@@ -1,0 +1,14 @@
+<Bindings>
+  <Binding name="TIC_SPEC_1" category="AddOns" header="Tic">
+    if Tic and Tic.ActivateSpecByIndex then Tic:ActivateSpecByIndex(1) end
+  </Binding>
+  <Binding name="TIC_SPEC_2" category="AddOns">
+    if Tic and Tic.ActivateSpecByIndex then Tic:ActivateSpecByIndex(2) end
+  </Binding>
+  <Binding name="TIC_SPEC_3" category="AddOns">
+    if Tic and Tic.ActivateSpecByIndex then Tic:ActivateSpecByIndex(3) end
+  </Binding>
+  <Binding name="TIC_SPEC_4" category="AddOns">
+    if Tic and Tic.ActivateSpecByIndex then Tic:ActivateSpecByIndex(4) end
+  </Binding>
+</Bindings>

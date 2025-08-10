@@ -22,7 +22,7 @@ Libs\Ace3\AceConfig-3.0\AceConfigCmd-3.0.lua
 Libs\Ace3\AceDBOptions-3.0\AceDBOptions-3.0.lua
 
 # Your addon
-
+Bindings.xml
 Core.lua
 Pixels.lua
 Rotations.lua

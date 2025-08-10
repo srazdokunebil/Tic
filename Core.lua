@@ -2,6 +2,20 @@
 local ADDON_NAME = ...
 local Tic = LibStub("AceAddon-3.0"):NewAddon("Tic", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 _G.Tic = Tic -- optional global for quick /run testing
+local floor = math.floor
+
+Tic.ClassSpecs = {
+  DRUID        = { "heal","mdps","rdps","tank" },        -- resto, feral(cat), balance, feral(bear)
+  DEATHKNIGHT  = { "blood","frost","unholy" },
+  HUNTER       = { "bm","mm","sv" },
+  MAGE         = { "arcane","frost","fire" },
+  PALADIN      = { "holy","prot","ret" },
+  PRIEST       = { "holy","shadow" },
+  ROGUE        = { "ass","combat","sub" },
+  SHAMAN       = { "heal","mdps","rdps","tank" },        -- your custom names
+  WARLOCK      = { "dsr","md","sm" },
+  WARRIOR      = { "arms","fury","prot" },
+}
 
 -- Defaults
 local defaults = {
@@ -17,6 +31,8 @@ local defaults = {
     pxSpacing = 8,    -- distance between boxes
     pxStrata = "TOOLTIP",
     pxGate = true,
+
+    specType = "rdps",
 
     debugEvents = false,
     debugOnUpdate = false,
@@ -73,6 +89,15 @@ function Tic:SignalIndex(idx)
   local c2, c3 = indexToPair(idx)
   self.Pixel:SetGate(true)        -- pixel1 = white gate on
   self.Pixel:SetPair(c2, c3)      -- pixel2/pixel3 = combo
+end
+
+-- Public API: set all pixels black (no-op indicator)
+function Tic:ClearPixels()
+  if not self.Pixel then return end
+  -- pixel1 black gate
+  self.Pixel:SetGate(false)               -- sets pixel1 to black
+  -- pixel2 & pixel3 black
+  self.Pixel:SetPair("000000", "000000")
 end
 
 -- Public API: convenience for spell-by-name -> find bound index, then signal
@@ -153,6 +178,51 @@ end
 
 
 
+-- Specs
+function Tic:GetSpecListForClass(eng)
+  return self.ClassSpecs[eng or self.playerClass or ""] or {}
+end
+
+function Tic:GetSpecType()
+  return (self.db and self.db.profile and self.db.profile.specType) or "auto"
+end
+
+function Tic:SetSpecType(spec)
+  spec = (spec or ""):lower()
+  if spec == "auto" then
+    self.db.profile.specType = "auto"
+    self:Printf("Spec set to: auto")
+    return true
+  end
+  local ok = false
+  for _, s in ipairs(self:GetSpecListForClass()) do if s == spec then ok = true break end end
+  if ok then
+    self.db.profile.specType = spec
+    self:Printf("Spec set to: %s", spec)
+    return true
+  else
+    self:Printf("Unknown spec %q for %s. Options: %s",
+      spec, tostring(self.playerClass or "?"), table.concat(self:GetSpecListForClass(), ", "))
+    return false
+  end
+end
+
+-- -- dir: +1 next, -1 prev
+-- function Tic:CycleSpec(dir)
+--   dir = (dir and dir ~= 0) and (dir > 0 and 1 or -1) or 1
+--   local list = self:GetSpecListForClass()
+--   if #list == 0 then self:Printf("No spec list for class %s.", tostring(self.playerClass or "?")); return end
+
+--   local cur = self:GetSpecType()
+--   local idx
+--   if cur == "auto" then idx = 1 else
+--     for i, s in ipairs(list) do if s == cur then idx = i break end end
+--     if not idx then idx = 1 end
+--   end
+--   idx = ((idx - 1 + dir) % #list) + 1
+--   self.db.profile.specType = list[idx]
+--   self:Printf("Spec cycled to: %s", self.db.profile.specType)
+-- end
 
 
 
@@ -195,6 +265,29 @@ function Tic:OnInitialize()
   self:RegisterChatCommand("tic", function(msg) self:HandleSlash(msg) end)
 end
 
+-- -- Clickable binding target for "Tic: Cycle Spec"
+-- local TicSpecCycleButton = CreateFrame("Button", "TicSpecCycleButton", UIParent)
+-- TicSpecCycleButton:SetScript("OnClick", function() if Tic and Tic.CycleSpec then Tic:CycleSpec(1) end end)
+
+-- Buttons that Key Bindings click to set spec 1..4
+for i = 1, 4 do
+  local b = CreateFrame("Button", "TicSpecButton"..i, UIParent)
+  b:SetScript("OnClick", function()
+    if Tic and Tic.ActivateSpecByIndex then Tic:ActivateSpecByIndex(i) end
+  end)
+end
+
+function Tic:ActivateSpecByIndex(i)
+  local list = self:GetSpecListForClass(self.playerClass)
+  local spec = list[i]
+  if spec then
+    self:SetSpecType(spec)
+  else
+    -- silently ignore when class has fewer than i specs
+    if self.db.profile.debug then self:Printf("No spec%d for %s", i, tostring(self.playerClass or "?")) end
+  end
+end
+
 function Tic:OnEnable()
   -- Events you can keep or replace
   self:RegisterEvent("UI_SCALE_CHANGED", "_OnScaleChanged")
@@ -229,6 +322,7 @@ function Tic:OnEnable()
     self._rotFrame:SetScript("OnUpdate", function(_, elapsed)
       if self.UpdateForClass then self:UpdateForClass(elapsed) end
     end)
+    self._rotFrame:Show()
   end
 
   self:Printf("Class: %s", tostring(self.playerClass or "?"))
@@ -303,6 +397,45 @@ function Tic:HandleSlash(msg)
 
   if sub == "px" then
     self:HandlePx(rest)
+    return
+  end
+
+  if msg == "diag" then
+    local cls = tostring(self.playerClass or "?")
+    local spec = self:GetSpecType()
+    local hasInitClass = self["_Init_"..cls] and "yes" or "no"
+    local hasInitSpec  = self["_Init_"..cls.."_"..spec] and "yes" or "no"
+    local hasUpdClass  = self["_Update_"..cls] and "yes" or "no"
+    local hasUpdSpec   = self["_Update_"..cls.."_"..spec] and "yes" or "no"
+    local rotShown = self._rotFrame and self._rotFrame:IsShown() and "yes" or "no"
+    local binds = (self.bindings and #self.bindings.list) or 0
+    self:Printf(("diag: class=%s spec=%s initClass=%s initSpec=%s updClass=%s updSpec=%s rotShown=%s bindings=%d"):
+      format(cls, spec, hasInitClass, hasInitSpec, hasUpdClass, hasUpdSpec, rotShown, binds))
+    return
+  end
+
+  if sub == "spec" then
+    local cmd, val = rest:match("^(%S*)%s*(.*)$")
+    cmd = (cmd or ""):lower()
+    val = (val or ""):lower()
+    if cmd == "" or cmd == "get" then
+      local list = table.concat(self:GetSpecListForClass(), ", ")
+      self:Printf("Spec: %s (class=%s). Options: %s",
+        self:GetSpecType(), tostring(self.playerClass or "?"), list)
+    elseif cmd == "set" and val ~= "" then
+      self:SetSpecType(val)
+    elseif cmd == "next" then
+      self:CycleSpec(1)
+    elseif cmd == "prev" or cmd == "previous" then
+      self:CycleSpec(-1)
+    else
+      self:Printf("Usage: /tic spec [get|set <spec>|next|prev]")
+    end
+    return
+  end
+
+  if msg == "test" then
+    Tic:Test()
     return
   end
 
