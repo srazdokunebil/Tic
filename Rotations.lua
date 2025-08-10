@@ -5,15 +5,19 @@ if not Tic then
   return
 end
 
-local Tic = LibStub("AceAddon-3.0"):GetAddon("Tic")
-
 -- Mark inits so we don’t double-bind
 Tic._classInited = Tic._classInited or {}
 
--- DRUID init (binds spells -> CTRL+1..)
+-- =========================================================
+-- Class Initializers (bind keys once, and register per-spec UI toggles)
+-- =========================================================
+
+-- DRUID init
 function Tic:_Init_DRUID()
   if self._classInited.DRUID then return end
   self:Printf("druid class initializing buttons")
+
+  -- Bindings (shared across specs for now)
   tic_bind_key("Moonkin Form")
   tic_bind_key("Faerie Fire")
   tic_bind_key("Moonfire")
@@ -22,8 +26,19 @@ function Tic:_Init_DRUID()
   tic_bind_key("Starfire")
   tic_bind_key("Starfall")
 
-  -- Make these appear as toggles in the UI (enable/disable per spell)
-  self:RegisterSpecToggles({
+  -- Register UI toggles PER SPEC so the HUD shows the right set on spec change
+  -- heal (resto) — empty example (add what you want visible in healer HUD)
+  self:RegisterSpecTogglesFor("DRUID", "heal", {
+    -- e.g., "Rejuvenation", "Regrowth", "Lifebloom"
+  })
+
+  -- mdps (feral cat) — placeholder
+  self:RegisterSpecTogglesFor("DRUID", "mdps", {
+    -- e.g., "Mangle (Cat)", "Rip", "Rake"
+  })
+
+  -- rdps (balance / moonkin)
+  self:RegisterSpecTogglesFor("DRUID", "rdps", {
     "Faerie Fire",
     "Moonfire",
     "Insect Swarm",
@@ -32,18 +47,31 @@ function Tic:_Init_DRUID()
     "Starfall",
   })
 
+  -- tank (bear) — placeholder
+  self:RegisterSpecTogglesFor("DRUID", "tank", {
+    -- e.g., "Mangle (Bear)", "Lacerate", "Swipe (Bear)"
+  })
+
   self._classInited.DRUID = true
 end
 
--- WARLOCK init (binds spells -> CTRL+1..)
+-- WARLOCK init
 function Tic:_Init_WARLOCK()
   if self._classInited.WARLOCK then return end
   self:Printf("warlock class initializing buttons")
+
+  -- Bindings (shared across specs for now)
   tic_bind_key("Corruption")
   tic_bind_key("Shadow Bolt")
 
-  -- Make these appear as toggles in the UI (enable/disable per spell)
-  self:RegisterSpecToggles({
+  -- Per‑spec HUD toggles
+  self:RegisterSpecTogglesFor("WARLOCK", "dsr", { -- demo/sac/ruin (your nomenclature)
+    -- add your dsr toggles here
+  })
+  self:RegisterSpecTogglesFor("WARLOCK", "md", {  -- meta/destro? (your nomenclature)
+    -- add your md toggles here
+  })
+  self:RegisterSpecTogglesFor("WARLOCK", "sm", {  -- affliction? (your nomenclature)
     "Corruption",
     "Shadow Bolt",
   })
@@ -51,8 +79,7 @@ function Tic:_Init_WARLOCK()
   self._classInited.WARLOCK = true
 end
 
-
--- Other classes (stubs)
+-- Other classes (stubs; register per-spec HUD lists here as you build them)
 function Tic:_Init_DEATHKNIGHT() if self._classInited.DEATHKNIGHT then return end; self._classInited.DEATHKNIGHT = true end
 function Tic:_Init_HUNTER()      if self._classInited.HUNTER      then return end; self._classInited.HUNTER = true end
 function Tic:_Init_MAGE()        if self._classInited.MAGE        then return end; self._classInited.MAGE = true end
@@ -60,98 +87,93 @@ function Tic:_Init_PALADIN()     if self._classInited.PALADIN     then return en
 function Tic:_Init_PRIEST()      if self._classInited.PRIEST      then return end; self._classInited.PRIEST = true end
 function Tic:_Init_ROGUE()       if self._classInited.ROGUE       then return end; self._classInited.ROGUE = true end
 function Tic:_Init_SHAMAN()      if self._classInited.SHAMAN      then return end; self._classInited.SHAMAN = true end
-function Tic:_Init_WARLOCK()     if self._classInited.WARLOCK     then return end; self._classInited.WARLOCK = true end
 function Tic:_Init_WARRIOR()     if self._classInited.WARRIOR     then return end; self._classInited.WARRIOR = true end
 
 -- Called by Core.lua after it sets self.playerClass
 function Tic:InitForClass(eng)
-  local spec = self:GetSpecType()
-  local fn
-  if spec ~= "auto" then
-    fn = self["_Init_"..eng.."_"..spec]
-  end
-  if not fn then
-    fn = self["_Init_"..eng]
-  end
+  local fn = self["_Init_"..eng]
   if fn then fn(self) else self:Printf("No init for class %s", tostring(eng)) end
 end
 
--- DRUID per-frame rotation (YOUR logic)
+-- =========================================================
+-- Rotations (spec switch handled INSIDE the class updater)
+-- =========================================================
+
+-- DRUID per-frame rotation (your logic with spec switch)
 function Tic:_Update_DRUID(elapsed)
-  -- Loud print so you can confirm it runs
   if self.db.profile.debug then print("druid spec:"..tostring(self.db.profile.specType)) end
 
-  if self.db.profile.specType == "holy" then
+  local spec = self.db.profile.specType
+  if spec == "heal" then
     Tic:ClearPixels()
-  elseif self.db.profile.specType == "mdps" then
+
+  elseif spec == "mdps" then
     Tic:ClearPixels()
-  elseif self.db.profile.specType == "rdps" then
+
+  elseif spec == "rdps" then
     if not self:IsValidAttackableTarget() then Tic:ClearPixels() return end
 
-    local inMoonkinForm = Tic:AmInMoonkinForm()
-    local hasFaerieFire = UnitDebuff("target", "Faerie Fire")
-    local hasInsectSwarm = UnitDebuff("target", "Insect Swarm")
-    local hasMoonfire = UnitDebuff("target", "Moonfire")
-    local haveLunarEclipse = UnitBuff("player", "Eclipse (Lunar)")
-    local haveSolarEclipse = UnitBuff("player", "Eclipse (Solar)")
-    local starfallReady = IsUsableSpell("Starfall") and (GetSpellCooldown("Starfall") == 0)
+    local inMoonkinForm   = Tic:AmInMoonkinForm() or nil
+    local hasFaerieFire   = UnitDebuff("target", "Faerie Fire")
+    local hasInsectSwarm  = UnitDebuff("target", "Insect Swarm")
+    local hasMoonfire     = UnitDebuff("target", "Moonfire")
+    local haveLunarEclipse= UnitBuff("player", "Eclipse (Lunar)")
+    local haveSolarEclipse= UnitBuff("player", "Eclipse (Solar)")
+    local starfallReady   = IsUsableSpell("Starfall") and (GetSpellCooldown("Starfall") == 0)
 
     if not inMoonkinForm then
       Tic_castSpellByName("Moonkin Form")
     elseif haveLunarEclipse then
-      Tic_castSpellByName("Starfire")
-      return
+      Tic_castSpellByName("Starfire"); return
     elseif haveSolarEclipse then
-      Tic_castSpellByName("Wrath")
-      return
+      Tic_castSpellByName("Wrath"); return
     elseif not hasFaerieFire and self:IsSpellEnabled("Faerie Fire") then
-      Tic_castSpellByName("Faerie Fire")
-      return
+      Tic_castSpellByName("Faerie Fire"); return
     elseif not hasMoonfire then
-      Tic_castSpellByName("Moonfire")
-      return
+      Tic_castSpellByName("Moonfire"); return
     elseif not hasInsectSwarm then
-      Tic_castSpellByName("Insect Swarm")
-      return
+      Tic_castSpellByName("Insect Swarm"); return
     elseif starfallReady and hasMoonfire and hasInsectSwarm then
-      Tic_castSpellByName("Starfall")
-       return
+      Tic_castSpellByName("Starfall"); return
     elseif not haveLunarEclipse and hasMoonfire and hasInsectSwarm and self:IsSpellEnabled("Wrath") then
-      Tic_castSpellByName("Wrath")
-      return
+      Tic_castSpellByName("Wrath"); return
     else
       Tic:ClearPixels()
     end
-  elseif self.db.profile.specType == "tank" then
+
+  elseif spec == "tank" then
+    Tic:ClearPixels()
+  else
+    -- unknown spec token -> do nothing
     Tic:ClearPixels()
   end
-
-  -- add your other conditions…
 end
 
--- WARLOCK per-frame rotation (YOUR logic)
+-- WARLOCK per-frame rotation (your logic with spec switch)
 function Tic:_Update_WARLOCK(elapsed)
-  -- Loud print so you can confirm it runs
   if self.db.profile.debug then print("warlock spec:"..tostring(self.db.profile.specType)) end
 
-  if self.db.profile.specType == "dsr" then
+  local spec = self.db.profile.specType
+  if spec == "dsr" then
     Tic:ClearPixels()
-  elseif self.db.profile.specType == "md" then
+
+  elseif spec == "md" then
     Tic:ClearPixels()
-  elseif self.db.profile.specType == "sm" then
+
+  elseif spec == "sm" then
     if not self:IsValidAttackableTarget() then Tic:ClearPixels() return end
     local hasCorruption = UnitDebuff("target", "Corruption")
     if not hasCorruption then
       Tic_castSpellByName("Corruption")
     elseif hasCorruption then
-      Tic_castSpellByName("Shadow Bolt")
-      return
+      Tic_castSpellByName("Shadow Bolt"); return
     else
       Tic:ClearPixels()
     end
-  end
 
-  -- add your other conditions…
+  else
+    Tic:ClearPixels()
+  end
 end
 
 -- Other classes (stubs)
@@ -162,21 +184,11 @@ function Tic:_Update_PALADIN(elapsed)     end
 function Tic:_Update_PRIEST(elapsed)      end
 function Tic:_Update_ROGUE(elapsed)       end
 function Tic:_Update_SHAMAN(elapsed)      end
-function Tic:_Update_WARLOCK(elapsed)     end
 function Tic:_Update_WARRIOR(elapsed)     end
 
 -- Dispatcher called every frame from Core.lua
 function Tic:UpdateForClass(elapsed)
   if not self.playerClass then return end
-  local spec = self:GetSpecType()
-  local fn
-  if spec ~= "auto" then
-    fn = self["_Update_"..self.playerClass.."_"..spec]  -- e.g., _Update_DRUID_rdps
-  end
-  if not fn then
-    fn = self["_Update_"..self.playerClass]             -- fallback: class-generic
-  end
+  local fn = self["_Update_"..self.playerClass]  -- ONLY class-generic updater
   if fn then fn(self, elapsed) end
 end
-
-

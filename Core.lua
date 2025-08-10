@@ -1,21 +1,12 @@
+-- Core.lua
 -- Ace3 core
 local ADDON_NAME = ...
 local Tic = LibStub("AceAddon-3.0"):NewAddon("Tic", "AceConsole-3.0", "AceEvent-3.0", "AceTimer-3.0")
 _G.Tic = Tic -- optional global for quick /run testing
-local floor = math.floor
 
-Tic.ClassSpecs = {
-  DRUID        = { "heal","mdps","rdps","tank" },        -- resto, feral(cat), balance, feral(bear)
-  DEATHKNIGHT  = { "blood","frost","unholy" },
-  HUNTER       = { "bm","mm","sv" },
-  MAGE         = { "arcane","frost","fire" },
-  PALADIN      = { "holy","prot","ret" },
-  PRIEST       = { "holy","shadow" },
-  ROGUE        = { "ass","combat","sub" },
-  SHAMAN       = { "heal","mdps","rdps","tank" },        -- your custom names
-  WARLOCK      = { "dsr","md","sm" },
-  WARRIOR      = { "arms","fury","prot" },
-}
+-- Locals
+local floor, max = math.floor, math.max
+local cos, sin, rad = math.cos, math.sin, math.rad
 
 -- Defaults
 local defaults = {
@@ -23,7 +14,7 @@ local defaults = {
     debug = false,
     throttle = 0.10,
 
-    -- Pixel beacon defaults: adjusted
+    -- Pixel beacon defaults
     pxEnabled = true,
     pxSize = 8,       -- size in pixels
     pxBaseX = 1,      -- screen X position of box1
@@ -44,8 +35,10 @@ local defaults = {
     -- Minimap button defaults
     mm = { shown = true, angle = 200, radius = 78 },
 
+    -- Spec defaults (set dynamically on first load)
     specType = nil,
 
+    -- Debug toggles
     debugEvents = false,
     debugOnUpdate = false,
   }
@@ -59,7 +52,7 @@ local PX_DEFAULTS = {
   size    = 8,
 }
 
--- Class table (display, short code) ----
+-- ---- Class table (display, short code) ----
 Tic_classes = {
   {"Death Knight", "DKT"},
   {"Druid",        "DRU"},
@@ -73,8 +66,31 @@ Tic_classes = {
   {"Warrior",      "WAR"},
 }
 
+-- Class -> Spec tokens (map by class token)
+Tic.ClassSpecs = {
+  DEATHKNIGHT = { "blood","frost","unholy" },
+  DRUID       = { "heal","mdps","rdps","tank" },
+  HUNTER      = { "bm","mm","sv" },
+  MAGE        = { "arcane","frost","fire" },
+  PALADIN     = { "holy","prot","ret" },
+  PRIEST      = { "holy","shadow" },
+  ROGUE       = { "ass","combat","sub" },
+  SHAMAN      = { "heal","mdps","rdps","tank" }, -- your nomenclature
+  WARLOCK     = { "dsr","md","sm" },
+  WARRIOR     = { "arms","fury","prot" },
+}
+
 -- ---- 6 colors used for pixel2/pixel3 (order matters; 6×6 = 36 combos) ----
 local SIX = { "FFFFFF", "FFFF00", "FF00FF", "00FFFF", "FF0000", "0000FF" } -- white,yellow,magenta,cyan,red,blue
+
+-- Utils
+function Tic:Printf(fmt, ...) DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[Tic]|r "..string.format(fmt, ...)) end
+local function trim(s) return (s or ""):match("^%s*(.-)%s*$") end
+
+-- Build a stable key for saved vars and HUD lists (CLASS:SPEC)
+local function SpecKey(classToken, specToken)
+  return (classToken or "?") .. ":" .. (specToken or "auto")
+end
 
 -- Compute the pair for an index 1..36: returns hex2, hex3
 local function indexToPair(idx)
@@ -96,23 +112,81 @@ local function indexToKeyToken(idx)
   return nil
 end
 
--- Public API: emit pixels for a given index (and raise the gate)
+-- ========================
+-- Per-spec toggle API (HUD lists)
+-- ========================
+function Tic:RegisterSpecToggles(spellList)
+  return self:RegisterSpecTogglesFor(self.playerClass, self:GetSpecType(), spellList or {})
+end
+
+function Tic:RegisterSpecTogglesFor(classToken, specToken, spellList)
+  self.specToggles = self.specToggles or {}
+  local key = SpecKey(classToken, specToken)
+
+  -- replace the list for this spec entirely
+  self.specToggles[key] = {}
+  for i, name in ipairs(spellList or {}) do
+    self.specToggles[key][i] = name
+  end
+
+  -- ensure saved toggle states table exists for this spec
+  self.db.profile.spellToggles = self.db.profile.spellToggles or {}
+  self.db.profile.spellToggles[key] = self.db.profile.spellToggles[key] or {}
+  local st = self.db.profile.spellToggles[key]
+
+  -- default new items to ON (don’t flip existing OFF)
+  for _, name in ipairs(self.specToggles[key]) do
+    if st[name] == nil then st[name] = true end
+  end
+
+  -- feedback
+  self:Printf("Registered %d toggle spell%s for spec [%s]",
+    #self.specToggles[key],
+    (#self.specToggles[key] == 1 and "" or "s"),
+    key
+  )
+  if #self.specToggles[key] > 0 then
+    DEFAULT_CHAT_FRAME:AddMessage("  " .. table.concat(self.specToggles[key], ", "))
+  end
+
+  -- if we registered for the ACTIVE spec, rebuild the HUD now
+  if classToken == self.playerClass and specToken == self:GetSpecType() then
+    self:UIBuild()
+  end
+end
+
+function Tic:ClearSpecToggles()
+  return self:ClearSpecTogglesFor(self.playerClass, self:GetSpecType())
+end
+
+function Tic:ClearSpecTogglesFor(classToken, specToken)
+  local key = SpecKey(classToken, specToken)
+  if self.specToggles and self.specToggles[key] then
+    self.specToggles[key] = nil
+  end
+  if classToken == self.playerClass and specToken == self:GetSpecType() then
+    self:UIBuild()
+  end
+end
+
+-- Rotation helper: is a spell enabled for the ACTIVE spec?
+function Tic:IsSpellEnabled(name)
+  local key = SpecKey(self.playerClass, self:GetSpecType())
+  local stateTbl = self.db.profile.spellToggles and self.db.profile.spellToggles[key]
+  return not stateTbl and true or stateTbl[name] ~= false
+end
+
+-- ========================
+-- Public Pixel API
+-- ========================
+-- Emit pixels for a given index (and raise the gate)
 function Tic:SignalIndex(idx)
   local c2, c3 = indexToPair(idx)
   self.Pixel:SetGate(true)        -- pixel1 = white gate on
   self.Pixel:SetPair(c2, c3)      -- pixel2/pixel3 = combo
 end
 
--- Public API: set all pixels black (no-op indicator)
-function Tic:ClearPixels()
-  if not self.Pixel then return end
-  -- pixel1 black gate
-  self.Pixel:SetGate(false)               -- sets pixel1 to black
-  -- pixel2 & pixel3 black
-  self.Pixel:SetPair("000000", "000000")
-end
-
--- Public API: convenience for spell-by-name -> find bound index, then signal
+-- Convenience: spell-by-name -> find bound index, then signal
 function Tic:CastSpellByNameSignal(spellName)
   local bind = self.bindings and self.bindings.bySpell and self.bindings.bySpell[spellName]
   if not bind then
@@ -122,9 +196,18 @@ function Tic:CastSpellByNameSignal(spellName)
   self:SignalIndex(bind.index)
 end
 
--- Alias you asked for
+-- Alias requested
 function Tic_castSpellByName(spellName)
   if Tic and Tic.CastSpellByNameSignal then Tic:CastSpellByNameSignal(spellName) end
+end
+
+-- Clear all three pixels to black (no-op indicator)
+function Tic:ClearPixels()
+  if not self.Pixel then return end
+  -- pixel1 black gate
+  self.Pixel:SetGate(false)               -- sets pixel1 to black
+  -- pixel2 & pixel3 black
+  self.Pixel:SetPair("000000", "000000")
 end
 
 -- Secure button factory and key binder (out of combat only)
@@ -172,336 +255,20 @@ function Tic:BindKey(spellName)
   return idx
 end
 
--- Shortcut name you used in your pseudocode
+-- Shortcut name used in examples
 function tic_bind_key(spellName)
   return Tic and Tic.BindKey and Tic:BindKey(spellName)
 end
 
 -- Class detection
-function Tic:GetPlayerClass() -- returns englishClass, classIndex
-  local _, eng = UnitClass("player") -- "DRUID", "MAGE", etc
-  -- map to our short codes if you want, not strictly necessary
+function Tic:GetPlayerClass() -- returns englishClass token (DRUID, etc)
+  local _, eng = UnitClass("player")
   return eng
 end
 
-
-
-
-
-
-
--- Specs
-function Tic:GetSpecListForClass(eng)
-  return self.ClassSpecs[eng or self.playerClass or ""] or {}
-end
-
-function Tic:GetSpecType()
-  return (self.db and self.db.profile and self.db.profile.specType) or "auto"
-end
-
-function Tic:SetSpecType(spec)
-  spec = (spec or ""):lower()
-  if spec == "auto" then
-    self.db.profile.specType = "auto"
-    self:Printf("Spec set to: auto")
-    if self.UIRefresh then self:UIRefresh() end
-    return true
-  end
-  local ok = false
-  for _, s in ipairs(self:GetSpecListForClass()) do if s == spec then ok = true break end end
-  if ok then
-    self.db.profile.specType = spec
-    self:Printf("Spec set to: %s", spec)
-    if self.UIRefresh then self:UIRefresh() end
-    return true
-  else
-    self:Printf("Unknown spec %q for %s. Options: %s",
-      spec, tostring(self.playerClass or "?"), table.concat(self:GetSpecListForClass(), ", "))
-    return false
-  end
-end
-
--- -- dir: +1 next, -1 prev
--- function Tic:CycleSpec(dir)
---   dir = (dir and dir ~= 0) and (dir > 0 and 1 or -1) or 1
---   local list = self:GetSpecListForClass()
---   if #list == 0 then self:Printf("No spec list for class %s.", tostring(self.playerClass or "?")); return end
-
---   local cur = self:GetSpecType()
---   local idx
---   if cur == "auto" then idx = 1 else
---     for i, s in ipairs(list) do if s == cur then idx = i break end end
---     if not idx then idx = 1 end
---   end
---   idx = ((idx - 1 + dir) % #list) + 1
---   self.db.profile.specType = list[idx]
---   self:Printf("Spec cycled to: %s", self.db.profile.specType)
--- end
-
-
-
-
-
--- Utils
-function Tic:Printf(fmt, ...) DEFAULT_CHAT_FRAME:AddMessage("|cff66ccff[Tic]|r "..string.format(fmt, ...)) end
-local function trim(s) return (s or ""):match("^%s*(.-)%s*$") end
-
-function Tic:OnInitialize()
-  self.db = LibStub("AceDB-3.0"):New("TicDB", defaults, true)
-
-  -- Options UI
-  local ACR = LibStub("AceConfig-3.0"); local ACD = LibStub("AceConfigDialog-3.0")
-  ACR:RegisterOptionsTable("Tic", self:GetOptionsTable().general)
-  self.optionsFrame = ACD:AddToBlizOptions("Tic", "Tic")
-  local AceDBOptions = LibStub("AceDBOptions-3.0", true)
-  if AceDBOptions then
-    local profiles = AceDBOptions:GetOptionsTable(self.db)
-    ACR:RegisterOptionsTable("Tic_Profiles", profiles)
-    ACD:AddToBlizOptions("Tic_Profiles", "Profiles", "Tic")
-  end
-
-  -- Wrap RegisterEvent so we can optionally print event names
-  self._OrigRegisterEvent = self.RegisterEvent
-  self.RegisterEvent = function(obj, event, method)
-    local real = method or event
-    local wrap
-    if type(real) == "string" then
-      wrap = function(...) if obj.db.profile.debugEvents then obj:Printf("[EV] %s", event) end; return obj[real](obj, ...) end
-    elseif type(real) == "function" then
-      wrap = function(...) if obj.db.profile.debugEvents then obj:Printf("[EV] %s", event) end; return real(...) end
-    else
-      wrap = function(...) if obj.db.profile.debugEvents then obj:Printf("[EV] %s", event) end; if obj[event] then return obj[event](obj, ...) end end
-    end
-    return Tic._OrigRegisterEvent(obj, event, wrap)
-  end
-
-  -- Slash
-  self:RegisterChatCommand("tic", function(msg) self:HandleSlash(msg) end)
-end
-
--- -- Clickable binding target for "Tic: Cycle Spec"
--- local TicSpecCycleButton = CreateFrame("Button", "TicSpecCycleButton", UIParent)
--- TicSpecCycleButton:SetScript("OnClick", function() if Tic and Tic.CycleSpec then Tic:CycleSpec(1) end end)
-
--- Buttons that Key Bindings click to set spec 1..4
-for i = 1, 4 do
-  local b = CreateFrame("Button", "TicSpecButton"..i, UIParent)
-  b:SetScript("OnClick", function()
-    if Tic and Tic.ActivateSpecByIndex then Tic:ActivateSpecByIndex(i) end
-  end)
-end
-
-function Tic:ActivateSpecByIndex(i)
-  local list = self:GetSpecListForClass(self.playerClass)
-  local spec = list[i]
-  if spec then
-    self:SetSpecType(spec)
-  else
-    -- silently ignore when class has fewer than i specs
-    if self.db.profile.debug then self:Printf("No spec%d for %s", i, tostring(self.playerClass or "?")) end
-  end
-end
-
-function Tic:OnEnable()
-  ------------------------------------------------------------
-  -- 1) Events you can keep or replace
-  ------------------------------------------------------------
-  self:RegisterEvent("UI_SCALE_CHANGED", "_OnScaleChanged")
-  self:RegisterEvent("PLAYER_ENTERING_WORLD", "_OnScaleChanged")
-  self:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
-
-  ------------------------------------------------------------
-  -- 2) Pixels (beacons)
-  ------------------------------------------------------------
-  self.Pixel = self.Pixel or Tic_Pixels:New(self)
-  self.Pixel:ApplyAll()  -- build frames & place them
-
-  ------------------------------------------------------------
-  -- 3) Detect class and set dynamic default spec (first for class)
-  ------------------------------------------------------------
-  local displayName, token = UnitClass("player")  -- e.g., "Druid", "DRUID"
-  self.playerClass = token
-
-  -- Only choose a default if nothing is saved yet (fresh profile)
-  if not self.db.profile.specType or self.db.profile.specType == "" then
-    local firstSpec
-
-    -- Case A: map-style table: Tic.ClassSpecs["DRUID"] = { "heal","mdps","rdps","tank" }
-    if type(self.ClassSpecs) == "table" and self.ClassSpecs[token] and type(self.ClassSpecs[token]) == "table" then
-      firstSpec = self.ClassSpecs[token][1]
-
-    else
-      -- Case B: list-style table: Tic:ClassSpecs = { { class="Druid", specs={...} }, ... }
-      local list = self.ClassSpecs or self["ClassSpecs"] or self["ClassSpecsList"] or self["ClassSpecsArray"]
-      if type(list) == "table" then
-        for _, entry in ipairs(list) do
-          if entry.class == displayName and type(entry.specs) == "table" then
-            firstSpec = entry.specs[1]
-            break
-          end
-        end
-      end
-    end
-
-    if firstSpec and firstSpec ~= "" then
-      self.db.profile.specType = firstSpec
-      self:Printf("No saved spec; defaulting to [%s] for class [%s].", firstSpec, token)
-    else
-      self.db.profile.specType = "auto"
-      self:Printf("No saved spec and no class spec list found; using [auto].")
-    end
-  end
-
-  ------------------------------------------------------------
-  -- 4) Class bootstrap (bindings and spec toggles defined in your inits)
-  ------------------------------------------------------------
-  if self.InitForClass then
-    self:InitForClass(self.playerClass)   -- tries spec-specific init first if you implemented that logic
-  end
-
-  ------------------------------------------------------------
-  -- 5) Rotation OnUpdate dispatcher (ensure frame is shown)
-  ------------------------------------------------------------
-  if not self._rotFrame then
-    self._rotFrame = CreateFrame("Frame", "TicRotationFrame")
-    self._rotFrame:SetScript("OnUpdate", function(_, elapsed)
-      if self.UpdateForClass then self:UpdateForClass(elapsed) end
-    end)
-  end
-  self._rotFrame:Show()
-
-  ------------------------------------------------------------
-  -- 6) Optional OnUpdate logger (kept from earlier)
-  ------------------------------------------------------------
-  if not self._updateFrame then
-    self._updateFrame = CreateFrame("Frame", "TicUpdateFrame")
-    self._updateAccum = 0
-    self._updateFrame:SetScript("OnUpdate", function(_, elapsed)
-      self._updateAccum = self._updateAccum + elapsed
-      local thr = self.db.profile.throttle or 0.10
-      if self._updateAccum >= thr then
-        if self.db.profile.debugOnUpdate then
-          -- self:Printf("[OnUpdate] tick (Δ=%.3f)", self._updateAccum)
-        end
-        self._updateAccum = 0
-      end
-    end)
-  end
-  self:_RefreshOnUpdateVisibility()
-
-  ------------------------------------------------------------
-  -- 7) UI/HUD and Minimap
-  ------------------------------------------------------------
-  self:UIBuild()         -- builds and shows if uiEnabled=true (persisted)
-  self:Minimap_Create()  -- minimap button (creates once; applies saved angle/visibility)
-
-  ------------------------------------------------------------
-  -- 8) Final console notes
-  ------------------------------------------------------------
-  self:Printf("Class: %s  |  Spec: %s", tostring(self.playerClass or "?"), tostring(self.db.profile.specType or "auto"))
-  self:Printf("Loaded. /tic options  |  /tic ui  |  /tic spec")
-end
-
-
-function Tic:OnDisable()
-  if self._updateFrame then self._updateFrame:Hide() end
-  if self.Pixel then self.Pixel:Show(false) end
-end
-
--- AceEvent calls methods as: self:EVENT(eventName, ...)
-function Tic:COMBAT_LOG_EVENT_UNFILTERED(event, ...)
-  local ts, subEvent, hideCaster,
-        srcGUID, srcName, srcFlags, srcRaidFlags,
-        dstGUID, dstName, dstFlags, dstRaidFlags,
-        spellId, spellName, spellSchool, auraType
-
-  if self.db.profile.debug then self:Printf("CLEU: %s", tostring((select(2, ...) or "???"))) end
-
-  if CombatLogGetCurrentEventInfo then
-    -- retail+ style
-    ts, subEvent, hideCaster,
-    srcGUID, srcName, srcFlags, srcRaidFlags,
-    dstGUID, dstName, dstFlags, dstRaidFlags,
-    spellId, spellName, spellSchool, auraType = CombatLogGetCurrentEventInfo()
-  else
-    -- 3.3.5 style: the event args are passed directly
-    ts, subEvent, hideCaster,
-    srcGUID, srcName, srcFlags, srcRaidFlags,
-    dstGUID, dstName, dstFlags, dstRaidFlags,
-    spellId, spellName, spellSchool, auraType = ...
-  end
-
-  -- your logic:
-  if (subEvent == "SPELL_AURA_APPLIED" or subEvent == "SPELL_AURA_REMOVED")
-     and dstGUID == UnitGUID("player") and self.db.profile.debug then
-    self:Printf("%s %s (%d) on player", subEvent, spellName or "?", spellId or 0)
-  end
-end
-
--- Scale change -> re-place for pixel-perfect alignment
-function Tic:_OnScaleChanged() if self.Pixel then self.Pixel:ApplyPositions() end end
-function Tic:_RefreshOnUpdateVisibility()
-  if not self._updateFrame then return end
-  if self.db and self.db.profile and self.db.profile.debugOnUpdate then
-    self._updateFrame:Show()
-  else
-    self._updateFrame:Hide()
-  end
-end
-
-
---region    ----    USERINTERFACE
-
-------------------------------------------------------------
--- Spec Toggles Registry (call from your class/spec init)
-------------------------------------------------------------
--- Register list of toggleable spells for the CURRENT spec.
--- Example: Tic:RegisterSpecToggles({"Moonfire","Insect Swarm","Faerie Fire"})
-function Tic:RegisterSpecToggles(spellList)
-  self.specToggles = self.specToggles or {}
-  local spec = self:GetSpecType()
-  local key  = (self.playerClass or "?") .. ":" .. (spec or "auto")
-  self.specToggles[key] = { unpack(spellList or {}) }
-
-  -- ensure saved states exist for each spell
-  self.db.profile.spellToggles = self.db.profile.spellToggles or {}
-  self.db.profile.spellToggles[key] = self.db.profile.spellToggles[key] or {}
-  local st = self.db.profile.spellToggles[key]
-  for _, name in ipairs(spellList or {}) do
-    if st[name] == nil then st[name] = true end  -- default ON
-  end
-
-  -- Feedback in chat
-  self:Printf(
-    "Registered %d toggle spell%s for spec [%s]",
-    #spellList or 0,
-    (#spellList == 1 and "" or "s"),
-    key
-  )
-  if #spellList > 0 then
-    DEFAULT_CHAT_FRAME:AddMessage("  " .. table.concat(spellList, ", "))
-  end
-
-  -- (Re)build the UI for the new spec
-  self:UIBuild()
-end
-
-
--- Query toggle state in rotations
-function Tic:IsSpellEnabled(name)
-  local spec = self:GetSpecType()
-  local key  = (self.playerClass or "?") .. ":" .. (spec or "auto")
-  local tbl  = self.db.profile.spellToggles and self.db.profile.spellToggles[key]
-  return not tbl and true or tbl[name] ~= false
-end
-
-------------------------------------------------------------
--- UI: frame + buttons
-------------------------------------------------------------
-local function GetSpecKey(self)
-  return (self.playerClass or "?") .. ":" .. (self:GetSpecType() or "auto")
-end
-
+-- ========================
+-- HUD / UI
+-- ========================
 function Tic:UIBuild()
   -- Respect master toggle
   if not (self.db and self.db.profile and self.db.profile.uiEnabled) then
@@ -574,9 +341,9 @@ function Tic:UIBuild()
 
   -- Resolve current spec list & toggle state
   local key   = (self.playerClass or "?") .. ":" .. (self:GetSpecType() or "auto")
-  local list  = (self.specToggles and self.specToggles[key]) or {}
   self.db.profile.spellToggles = self.db.profile.spellToggles or {}
   self.db.profile.spellToggles[key] = self.db.profile.spellToggles[key] or {}
+  local list  = (self.specToggles and self.specToggles[key]) or {}
   local state = self.db.profile.spellToggles[key]
 
   -- Nuke old buttons
@@ -592,7 +359,7 @@ function Tic:UIBuild()
   local rows = math.ceil((#list > 0 and #list or 1) / cols) -- keep some height if empty
   local w = cols*size + (cols-1)*pad + 12
   local h = rows*size + (rows-1)*pad + 28
-  f:SetSize(math.max(120, w), math.max(40, h))
+  f:SetSize(max(120, w), max(40, h))
 
   -- Build buttons
   for i, spellName in ipairs(list) do
@@ -600,7 +367,7 @@ function Tic:UIBuild()
     b:SetSize(size, size)
 
     local col = (i-1) % cols
-    local row = math.floor((i-1) / cols)
+    local row = floor((i-1) / cols)
     b:SetPoint("TOPLEFT", col*(size+pad), -row*(size+pad))
 
     -- Icon
@@ -658,9 +425,23 @@ function Tic:UIBuild()
   if self.db.profile.uiEnabled then f:Show() else f:Hide() end
 end
 
+function Tic:UIRefresh() self:UIBuild() end
+
+function Tic:UIResetPosition()
+  if not (self.ui and self.ui.frame) then self:UIBuild() end
+  if not (self.ui and self.ui.frame) then return end
+  local f = self.ui.frame
+  f:ClearAllPoints()
+  f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+  f:SetScale(self.db.profile.uiScale or 1)
+  f:SetAlpha(self.db.profile.uiAlpha or 1)
+  f:Show()
+  self.db.profile.uiEnabled = true
+  self.db.profile.uiLocked  = false
+  self:Printf("UI reset to screen center. (Unlocked)")
+end
 
 function Tic:UIResetAll()
-  -- restore defaults
   self.db.profile.uiEnabled = true
   self.db.profile.uiLocked  = false
   self.db.profile.uiScale   = 1.0
@@ -668,8 +449,6 @@ function Tic:UIResetAll()
   self.db.profile.uiCols    = 8
   self.db.profile.uiIcon    = 32
   self.db.profile.uiPos     = { point = "CENTER", rel = "CENTER", x = 0, y = 0 }
-
-  -- rebuild & center
   self:UIBuild()
   if self.ui and self.ui.frame then
     local f = self.ui.frame
@@ -679,29 +458,12 @@ function Tic:UIResetAll()
     f:SetAlpha(self.db.profile.uiAlpha)
     f:Show()
   end
-
   self:Printf("UI reset to defaults (centered, unlocked, scale=1, alpha=1, cols=8, icon=32).")
 end
 
--- function Tic:UIResetPosition()
---   if not (self.ui and self.ui.frame) then self:UIBuild() end
---   if not (self.ui and self.ui.frame) then return end
-
---   local f = self.ui.frame
---   f:ClearAllPoints()
---   f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
---   f:SetScale(self.db.profile.uiScale or 1)
---   f:SetAlpha(self.db.profile.uiAlpha or 1)
---   f:Show()
-
---   self.db.profile.uiEnabled = true
---   self.db.profile.uiLocked  = false
---   self:Printf("UI reset to screen center. (Unlocked)")
--- end
-
--- ========= Minimap Button (3.3.5) =========
-local cos, sin, rad = math.cos, math.sin, math.rad
-
+-- ========================
+-- Minimap Button (Wrath)
+-- ========================
 function Tic:Minimap_SetPosition(angle)
   self.db.profile.mm.angle = angle
   if not self.mm or not self.mm.btn then return end
@@ -725,7 +487,6 @@ function Tic:Minimap_ToggleUI()
   self:Printf("UI %s", self.db.profile.uiEnabled and "shown" or "hidden")
 end
 
--- Right-click dropdown
 function Tic:Minimap_InitMenu()
   if self.mm and self.mm.menu then return end
   self.mm = self.mm or {}
@@ -746,7 +507,7 @@ function Tic:Minimap_OpenMenu(anchor)
       func = function()
         if Tic.optionsFrame then
           InterfaceOptionsFrame_OpenToCategory(Tic.optionsFrame)
-          InterfaceOptionsFrame_OpenToCategory(Tic.optionsFrame) -- twice for 3.3.5 focus quirk
+          InterfaceOptionsFrame_OpenToCategory(Tic.optionsFrame)
         end
         CloseDropDownMenus()
       end },
@@ -755,11 +516,9 @@ function Tic:Minimap_OpenMenu(anchor)
       func = function() Tic:Minimap_Show(false); CloseDropDownMenus() end },
     { text = "Cancel", notCheckable = true },
   }
-
   EasyMenu(menu, self.mm.menu, anchor or "cursor", 0, 0, "MENU", 2)
 end
 
--- Create the minimap button
 function Tic:Minimap_Create()
   self.mm = self.mm or {}
   if self.mm.btn then return end
@@ -775,7 +534,7 @@ function Tic:Minimap_Create()
   overlay:SetPoint("TOPLEFT")
 
   local icon = b:CreateTexture(nil, "BACKGROUND")
-  icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") -- replace with your icon if you want
+  icon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark") -- change if desired
   icon:SetSize(20, 20)
   icon:SetPoint("CENTER", 0, 0)
   b.icon = icon
@@ -793,11 +552,20 @@ function Tic:Minimap_Create()
   -- Shift-drag to move around rim
   b:RegisterForDrag("LeftButton")
   b:SetScript("OnDragStart", function(selfBtn)
-    if IsShiftKeyDown() then selfBtn:SetScript("OnUpdate", function() Tic:Minimap_OnDragging(selfBtn) end) end
+    if IsShiftKeyDown() then
+      selfBtn:SetScript("OnUpdate", function()
+        local mx, my = Minimap:GetCenter()
+        local px, py = GetCursorPosition()
+        local scale = Minimap:GetEffectiveScale()
+        px, py = px / scale, py / scale
+        local dx, dy = px - mx, py - my
+        local angle = math.deg(math.atan2(dy, dx))
+        if angle < 0 then angle = angle + 360 end
+        Tic:Minimap_SetPosition(angle)
+      end)
+    end
   end)
-  b:SetScript("OnDragStop", function(selfBtn)
-    selfBtn:SetScript("OnUpdate", nil)
-  end)
+  b:SetScript("OnDragStop", function(selfBtn) selfBtn:SetScript("OnUpdate", nil) end)
 
   -- Tooltip
   b:SetScript("OnEnter", function(selfBtn)
@@ -816,134 +584,59 @@ function Tic:Minimap_Create()
   self:Minimap_Show(self.db.profile.mm.shown ~= false)
 end
 
--- Calculate angle while dragging
-function Tic:Minimap_OnDragging(btn)
-  local mx, my = Minimap:GetCenter()
-  local px, py = GetCursorPosition()
-  local scale = Minimap:GetEffectiveScale()
-  px, py = px / scale, py / scale
-  local dx, dy = px - mx, py - my
-  local angle = math.deg(math.atan2(dy, dx))
-  if angle < 0 then angle = angle + 360 end
-  self:Minimap_SetPosition(angle)
-end
--- ========= /Minimap Button =========
-
-
-local function SetVisible(region, state)
-  if state then region:Show() else region:Hide() end
+-- ========================
+-- Event helpers & misc
+-- ========================
+-- Valid hostile target?
+function Tic:IsValidAttackableTarget()
+  if not UnitExists("target") then return false end
+  if UnitIsDead("target") then return false end
+  if UnitIsFriend("player","target") then return false end
+  if not UnitCanAttack("player","target") then return false end
+  return true
 end
 
--- Call when spec changes (we already call UIBuild in RegisterSpecToggles)
-function Tic:UIRefresh()
-  self:UIBuild()
+-- Scale change -> re-place for pixel-perfect alignment
+function Tic:_OnScaleChanged() if self.Pixel then self.Pixel:ApplyPositions() end end
+function Tic:_RefreshOnUpdateVisibility()
+  if not self._updateFrame then return end
+  if self.db and self.db.profile and self.db.profile.debugOnUpdate then
+    self._updateFrame:Show()
+  else
+    self._updateFrame:Hide()
+  end
 end
 
---endregion ----    USERINTERFACE
+-- CLEU (Wrath-compatible: no CombatLogGetCurrentEventInfo)
+function Tic:COMBAT_LOG_EVENT_UNFILTERED(event, ...)
+  local ts, subEvent, hideCaster,
+        srcGUID, srcName, srcFlags, srcRaidFlags,
+        dstGUID, dstName, dstFlags, dstRaidFlags,
+        spellId, spellName, spellSchool, auraType
 
+  if self.db.profile.debug then self:Printf("CLEU: %s", tostring((select(2, ...) or "???"))) end
 
---region    ----    SLASHCOMMANDS
-function Tic:HandleSlash(msg)
-  msg = trim(msg or "")
-  local sub, rest = msg:match("^(%S+)%s*(.*)$")
-  if not sub or sub == "" then
-    self:Printf("Commands:")
-    DEFAULT_CHAT_FRAME:AddMessage("  /tic options                - open config")
-    DEFAULT_CHAT_FRAME:AddMessage("  /tic px help                - pixel beacon help")
-    return
+  if CombatLogGetCurrentEventInfo then
+    ts, subEvent, hideCaster,
+    srcGUID, srcName, srcFlags, srcRaidFlags,
+    dstGUID, dstName, dstFlags, dstRaidFlags,
+    spellId, spellName, spellSchool, auraType = CombatLogGetCurrentEventInfo()
+  else
+    ts, subEvent, hideCaster,
+    srcGUID, srcName, srcFlags, srcRaidFlags,
+    dstGUID, dstName, dstFlags, dstRaidFlags,
+    spellId, spellName, spellSchool, auraType = ...
   end
 
-  if sub == "options" or sub == "opt" then
-    InterfaceOptionsFrame_OpenToCategory(self.optionsFrame)
-    InterfaceOptionsFrame_OpenToCategory(self.optionsFrame)
-    return
+  if (subEvent == "SPELL_AURA_APPLIED" or subEvent == "SPELL_AURA_REMOVED")
+     and dstGUID == UnitGUID("player") and self.db.profile.debug then
+    self:Printf("%s %s (%d) on player", subEvent, spellName or "?", spellId or 0)
   end
-
-  if sub == "px" then
-    self:HandlePx(rest)
-    return
-  end
-
-  if msg == "diag" then
-    local cls = tostring(self.playerClass or "?")
-    local spec = self:GetSpecType()
-    local hasInitClass = self["_Init_"..cls] and "yes" or "no"
-    local hasInitSpec  = self["_Init_"..cls.."_"..spec] and "yes" or "no"
-    local hasUpdClass  = self["_Update_"..cls] and "yes" or "no"
-    local hasUpdSpec   = self["_Update_"..cls.."_"..spec] and "yes" or "no"
-    local rotShown = self._rotFrame and self._rotFrame:IsShown() and "yes" or "no"
-    local binds = (self.bindings and #self.bindings.list) or 0
-    self:Printf(("diag: class=%s spec=%s initClass=%s initSpec=%s updClass=%s updSpec=%s rotShown=%s bindings=%d"):
-      format(cls, spec, hasInitClass, hasInitSpec, hasUpdClass, hasUpdSpec, rotShown, binds))
-    return
-  end
-
-  if sub == "spec" then
-    local cmd, val = rest:match("^(%S*)%s*(.*)$")
-    cmd = (cmd or ""):lower()
-    val = (val or ""):lower()
-    if cmd == "" or cmd == "get" then
-      local list = table.concat(self:GetSpecListForClass(), ", ")
-      self:Printf("Spec: %s (class=%s). Options: %s",
-        self:GetSpecType(), tostring(self.playerClass or "?"), list)
-    elseif cmd == "set" and val ~= "" then
-      self:SetSpecType(val)
-    elseif cmd == "next" then
-      self:CycleSpec(1)
-    elseif cmd == "prev" or cmd == "previous" then
-      self:CycleSpec(-1)
-    else
-      self:Printf("Usage: /tic spec [get|set <spec>|next|prev]")
-    end
-    return
-  end
-
-  if sub == "ui" then
-    local cmd, val = rest:match("^(%S*)%s*(.*)$"); cmd = (cmd or ""):lower()
-    if cmd == "" or cmd == "help" then
-      self:Printf("UI:")
-      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui show|hide|toggle")
-      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui lock|unlock")
-      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui scale <0.5..2.0>")
-      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui alpha <0.1..1.0>")
-      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui cols <n>")
-      return
-    elseif cmd == "show" or cmd == "hide" or cmd == "toggle" then
-      if cmd == "toggle" then self.db.profile.uiEnabled = not self.db.profile.uiEnabled
-      else self.db.profile.uiEnabled = (cmd == "show") end
-      self:UIBuild()
-      self:Printf("UI %s", self.db.profile.uiEnabled and "shown" or "hidden")
-      return
-    elseif cmd == "lock" or cmd == "unlock" then
-      self.db.profile.uiLocked = (cmd == "lock")
-      self:Printf("UI is now %s", self.db.profile.uiLocked and "locked" or "unlocked")
-      return
-    elseif cmd == "scale" then
-      local n = tonumber(val); if not n then self:Printf("Usage: /tic ui scale <number>"); return end
-      self.db.profile.uiScale = n; self:UIBuild(); return
-    elseif cmd == "alpha" then
-      local n = tonumber(val); if not n then self:Printf("Usage: /tic ui alpha <0.1..1.0>"); return end
-      self.db.profile.uiAlpha = n; self:UIBuild(); return
-    elseif cmd == "cols" then
-      local n = tonumber(val); if not n then self:Printf("Usage: /tic ui cols <n>"); return end
-      self.db.profile.uiCols = max(1, floor(n)); self:UIBuild(); return
-    elseif cmd == "reset" then
-      self:UIResetAll()
-      return
-    else
-      self:Printf("Usage: /tic ui help")
-      return
-    end
-  end
-
-  if msg == "test" then
-    Tic:Test()
-    return
-  end
-
-  self:Printf("Unknown command. Try /tic or /tic px help")
 end
 
+-- ========================
+-- Slash commands
+-- ========================
 local colorNames = { white="FFFFFF", yellow="FFFF00", magenta="FF00FF", cyan="00FFFF", red="FF0000", blue="0000FF", black="000000" }
 
 function Tic:HandlePx(rest)
@@ -958,7 +651,8 @@ function Tic:HandlePx(rest)
     DEFAULT_CHAT_FRAME:AddMessage("  /tic px size <n>           - set square size")
     DEFAULT_CHAT_FRAME:AddMessage("  /tic px spacing <n>        - set spacing between boxes")
     DEFAULT_CHAT_FRAME:AddMessage("  /tic px set <c2> <c3>      - set colors by name (white|yellow|magenta|cyan|red|blue|black)")
-    DEFAULT_CHAT_FRAME:AddMessage("  /tic px defaults           - reset pos/size/spacing to defaults") -- ← add this
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic px defaults           - reset pos/size/spacing to defaults")
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic px clear              - set all three pixels to black")
     DEFAULT_CHAT_FRAME:AddMessage("  /tic px test               - quick cycle test")
     return
   end
@@ -1010,33 +704,271 @@ function Tic:HandlePx(rest)
     return
   end
 
-  if a == "test" then
-    self.Pixel:TestCycle()
-    return
-  end
-
   if a == "defaults" then
     local d = PX_DEFAULTS
     self.db.profile.pxBaseX   = d.baseX
     self.db.profile.pxBaseY   = d.baseY
     self.db.profile.pxSpacing = d.spacing
     self.db.profile.pxSize    = d.size
-
-    -- Reapply sizes/positions immediately (no reload needed)
     if self.Pixel then
       self.Pixel:ApplySizes()
       self.Pixel:ApplyPositions()
     end
-
     self:Printf("Pixel defaults applied: x=%d y=%d spacing=%d size=%d",
       d.baseX, d.baseY, d.spacing, d.size)
+    return
+  end
+
+  if a == "clear" then
+    self:ClearPixels()
+    self:Printf("Pixels cleared (all black).")
+    return
+  end
+
+  if a == "test" then
+    self.Pixel:TestCycle()
     return
   end
 
   self:Printf("Unknown px cmd. /tic px help")
 end
 
---endregion ----    SLASHCOMMANDS
+function Tic:GetSpecListForClass(eng) return self.ClassSpecs[eng or self.playerClass or ""] or {} end
+function Tic:GetSpecType() return (self.db and self.db.profile and self.db.profile.specType) or "auto" end
+function Tic:SetSpecType(spec)
+  spec = (spec or ""):lower()
+  if spec == "auto" then
+    self.db.profile.specType = "auto"
+    self:Printf("Spec set to: auto")
+    self:UIRefresh()
+    return true
+  end
+  local ok = false
+  for _, s in ipairs(self:GetSpecListForClass()) do if s == spec then ok = true break end end
+  if ok then
+    self.db.profile.specType = spec
+    self:Printf("Spec set to: %s", spec)
+    self:UIRefresh()
+    return true
+  else
+    self:Printf("Unknown spec %q for %s. Options: %s",
+      spec, tostring(self.playerClass or "?"), table.concat(self:GetSpecListForClass(), ", "))
+    return false
+  end
+end
 
--- Exposed for Options.lua
+function Tic:ActivateSpecByIndex(i)
+  local list = self:GetSpecListForClass(self.playerClass)
+  local spec = list[i]
+  if spec then
+    self:SetSpecType(spec)
+  else
+    if self.db.profile.debug then self:Printf("No spec%d for %s", i, tostring(self.playerClass or "?")) end
+  end
+end
+
+function Tic:HandleSlash(msg)
+  msg = trim(msg or "")
+  local sub, rest = msg:match("^(%S+)%s*(.*)$")
+  if not sub or sub == "" then
+    self:Printf("Commands:")
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic options                - open config (if installed)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic px help                - pixel beacon help")
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic ui help                - HUD controls")
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic spec                   - show/set spec")
+    return
+  end
+
+  if sub == "options" or sub == "opt" then
+    if self.optionsFrame then
+      InterfaceOptionsFrame_OpenToCategory(self.optionsFrame)
+      InterfaceOptionsFrame_OpenToCategory(self.optionsFrame)
+    else
+      self:Printf("Options panel not available.")
+    end
+    return
+  end
+
+  if sub == "px" then self:HandlePx(rest); return end
+
+  if sub == "ui" then
+    local cmd, val = rest:match("^(%S*)%s*(.*)$"); cmd = (cmd or ""):lower()
+    if cmd == "" or cmd == "help" then
+      self:Printf("UI:")
+      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui show|hide|toggle")
+      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui lock|unlock")
+      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui scale <0.5..2.0>")
+      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui alpha <0.1..1.0>")
+      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui cols <n>")
+      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui reset               - reset HUD to defaults & center")
+      return
+    elseif cmd == "show" or cmd == "hide" or cmd == "toggle" then
+      if cmd == "toggle" then self.db.profile.uiEnabled = not self.db.profile.uiEnabled
+      else self.db.profile.uiEnabled = (cmd == "show") end
+      self:UIBuild()
+      self:Printf("UI %s", self.db.profile.uiEnabled and "shown" or "hidden")
+      return
+    elseif cmd == "lock" or cmd == "unlock" then
+      self.db.profile.uiLocked = (cmd == "lock")
+      self:Printf("UI is now %s", self.db.profile.uiLocked and "locked" or "unlocked")
+      return
+    elseif cmd == "scale" then
+      local n = tonumber(val); if not n then self:Printf("Usage: /tic ui scale <number>"); return end
+      self.db.profile.uiScale = n; self:UIBuild(); return
+    elseif cmd == "alpha" then
+      local n = tonumber(val); if not n then self:Printf("Usage: /tic ui alpha <0.1..1.0>"); return end
+      self.db.profile.uiAlpha = n; self:UIBuild(); return
+    elseif cmd == "cols" then
+      local n = tonumber(val); if not n then self:Printf("Usage: /tic ui cols <n>"); return end
+      self.db.profile.uiCols = max(1, floor(n)); self:UIBuild(); return
+    elseif cmd == "reset" then
+      self:UIResetAll(); return
+    else
+      self:Printf("Usage: /tic ui help"); return
+    end
+  end
+
+  if sub == "spec" then
+    local cmd, val = rest:match("^(%S*)%s*(.*)$")
+    cmd = (cmd or ""):lower()
+    val = (val or ""):lower()
+    if cmd == "" or cmd == "get" then
+      local list = table.concat(self:GetSpecListForClass(self.playerClass), ", ")
+      self:Printf("Spec: %s (class=%s). Options: %s",
+        self:GetSpecType(), tostring(self.playerClass or "?"), list ~= "" and list or "—")
+    elseif cmd == "set" and val ~= "" then
+      self:SetSpecType(val)
+    elseif cmd == "next" then
+      local list = self:GetSpecListForClass(self.playerClass)
+      if #list == 0 then self:Printf("No spec list for class %s.", tostring(self.playerClass or "?")); return end
+      local cur = self:GetSpecType()
+      local idx = 1
+      for i, s in ipairs(list) do if s == cur then idx = i break end end
+      idx = ((idx) % #list) + 1
+      self:SetSpecType(list[idx])
+    elseif cmd == "prev" or cmd == "previous" then
+      local list = self:GetSpecListForClass(self.playerClass)
+      if #list == 0 then self:Printf("No spec list for class %s.", tostring(self.playerClass or "?")); return end
+      local cur = self:GetSpecType()
+      local idx = 1
+      for i, s in ipairs(list) do if s == cur then idx = i break end end
+      idx = ((idx - 2) % #list) + 1
+      self:SetSpecType(list[idx])
+    else
+      self:Printf("Usage: /tic spec [get|set <spec>|next|prev]")
+    end
+    return
+  end
+
+  if sub == "diag" then
+    local cls = tostring(self.playerClass or "?")
+    local spec = self:GetSpecType()
+    local rotShown = self._rotFrame and self._rotFrame:IsShown() and "yes" or "no"
+    local binds = (self.bindings and #self.bindings.list) or 0
+    self:Printf("diag: class=%s spec=%s rotShown=%s bindings=%d", cls, spec, rotShown, binds)
+    return
+  end
+
+  self:Printf("Unknown command. Try /tic, /tic px help, /tic ui help, /tic spec")
+end
+
+-- ========================
+-- Ace lifecycle
+-- ========================
+function Tic:OnInitialize()
+  self.db = LibStub("AceDB-3.0"):New("TicDB", defaults, true)
+
+  -- Optional: register a minimal options panel placeholder (so /tic options works)
+  local ACR = LibStub("AceConfig-3.0", true); local ACD = LibStub("AceConfigDialog-3.0", true)
+  if ACR and ACD and self.GetOptionsTable then
+    ACR:RegisterOptionsTable("Tic", self:GetOptionsTable().general)
+    self.optionsFrame = ACD:AddToBlizOptions("Tic", "Tic")
+  end
+
+  -- Wrap RegisterEvent so we can optionally print event names
+  self._OrigRegisterEvent = self.RegisterEvent
+  self.RegisterEvent = function(obj, event, method)
+    local real = method or event
+    local wrap
+    if type(real) == "string" then
+      wrap = function(...) if obj.db.profile.debugEvents then obj:Printf("[EV] %s", event) end; return obj[real](obj, ...) end
+    elseif type(real) == "function" then
+      wrap = function(...) if obj.db.profile.debugEvents then obj:Printf("[EV] %s", event) end; return real(...) end
+    else
+      wrap = function(...) if obj.db.profile.debugEvents then obj:Printf("[EV] %s", event) end; if obj[event] then return obj[event](obj, ...) end end
+    end
+    return Tic._OrigRegisterEvent(obj, event, wrap)
+  end
+
+  -- Slash
+  self:RegisterChatCommand("tic", function(msg) self:HandleSlash(msg) end)
+end
+
+function Tic:OnEnable()
+  -- Events
+  self:RegisterEvent("UI_SCALE_CHANGED", "_OnScaleChanged")
+  self:RegisterEvent("PLAYER_ENTERING_WORLD", "_OnScaleChanged")
+  self:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
+
+  -- Pixels (beacons)
+  self.Pixel = self.Pixel or Tic_Pixels:New(self)
+  self.Pixel:ApplyAll()  -- build frames & place them
+
+  -- Class & dynamic default spec
+  local displayName, token = UnitClass("player")  -- "Druid", "DRUID"
+  self.playerClass = token
+  if not self.db.profile.specType or self.db.profile.specType == "" then
+    local first = self.ClassSpecs[token] and self.ClassSpecs[token][1] or nil
+    self.db.profile.specType = first or "auto"
+    if first then
+      self:Printf("No saved spec; defaulting to [%s] for class [%s].", first, token)
+    else
+      self:Printf("No saved spec and no class spec list found; using [auto].")
+    end
+  end
+
+  -- Class bootstrap (bindings and per-spec HUD lists defined in Rotations.lua)
+  if self.InitForClass then self:InitForClass(self.playerClass) end
+
+  -- Rotation OnUpdate dispatcher (ensure frame is shown)
+  if not self._rotFrame then
+    self._rotFrame = CreateFrame("Frame", "TicRotationFrame")
+    self._rotFrame:SetScript("OnUpdate", function(_, elapsed)
+      if self.UpdateForClass then self:UpdateForClass(elapsed) end
+    end)
+  end
+  self._rotFrame:Show()
+
+  -- Optional OnUpdate logger
+  if not self._updateFrame then
+    self._updateFrame = CreateFrame("Frame", "TicUpdateFrame")
+    self._updateAccum = 0
+    self._updateFrame:SetScript("OnUpdate", function(_, elapsed)
+      self._updateAccum = self._updateAccum + elapsed
+      local thr = self.db.profile.throttle or 0.10
+      if self._updateAccum >= thr then
+        if self.db.profile.debugOnUpdate then
+          -- self:Printf("[OnUpdate] tick (Δ=%.3f)", self._updateAccum)
+        end
+        self._updateAccum = 0
+      end
+    end)
+  end
+  self:_RefreshOnUpdateVisibility()
+
+  -- HUD + minimap
+  self:UIBuild()
+  self:Minimap_Create()
+
+  -- Final notes
+  self:Printf("Class: %s  |  Spec: %s", tostring(self.playerClass or "?"), tostring(self.db.profile.specType or "auto"))
+  self:Printf("Loaded. /tic ui  |  /tic px help  |  /tic spec")
+end
+
+function Tic:OnDisable()
+  if self._updateFrame then self._updateFrame:Hide() end
+  if self.Pixel then self.Pixel:Show(false) end
+end
+
+-- Exposed for Options.lua (if present)
 Tic._GetAddon = function() return Tic end
