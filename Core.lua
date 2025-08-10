@@ -32,6 +32,15 @@ local defaults = {
     pxStrata = "TOOLTIP",
     pxGate = true,
 
+    -- UI widget defaults
+    uiEnabled = true,
+    uiLocked  = false,
+    uiScale   = 1.0,
+    uiAlpha   = 1.0,
+    uiCols    = 8,      -- icons per row before wrapping
+    uiIcon    = 32,     -- icon size (px)
+    uiPos = { point = "CENTER", rel = "CENTER", x = 0, y = 0 },
+
     specType = "rdps",
 
     debugEvents = false,
@@ -192,6 +201,7 @@ function Tic:SetSpecType(spec)
   if spec == "auto" then
     self.db.profile.specType = "auto"
     self:Printf("Spec set to: auto")
+    if self.UIRefresh then self:UIRefresh() end
     return true
   end
   local ok = false
@@ -199,6 +209,7 @@ function Tic:SetSpecType(spec)
   if ok then
     self.db.profile.specType = spec
     self:Printf("Spec set to: %s", spec)
+    if self.UIRefresh then self:UIRefresh() end
     return true
   else
     self:Printf("Unknown spec %q for %s. Options: %s",
@@ -316,6 +327,9 @@ function Tic:OnEnable()
   self.playerClass = self:GetPlayerClass()             -- e.g., "DRUID"
   if self.InitForClass then self:InitForClass(self.playerClass) end
 
+  -- Build/refesh the UI after class/spec init so it appears on login/reload
+  self:UIBuild()
+
   -- OnUpdate dispatcher for rotations
   if not self._rotFrame then
     self._rotFrame = CreateFrame("Frame", "TicRotationFrame")
@@ -323,6 +337,11 @@ function Tic:OnEnable()
       if self.UpdateForClass then self:UpdateForClass(elapsed) end
     end)
     self._rotFrame:Show()
+  end
+
+  -- reset HUD
+  if self.db.profile.uiEnabled and (not self.ui or not self.ui.frame) then
+    self:UIResetAll()
   end
 
   self:Printf("Class: %s", tostring(self.playerClass or "?"))
@@ -378,7 +397,269 @@ function Tic:_RefreshOnUpdateVisibility()
   end
 end
 
--- -------- Slash commands --------
+
+--region    ----    USERINTERFACE
+
+------------------------------------------------------------
+-- Spec Toggles Registry (call from your class/spec init)
+------------------------------------------------------------
+-- Register list of toggleable spells for the CURRENT spec.
+-- Example: Tic:RegisterSpecToggles({"Moonfire","Insect Swarm","Faerie Fire"})
+function Tic:RegisterSpecToggles(spellList)
+  self.specToggles = self.specToggles or {}
+  local spec = self:GetSpecType()
+  local key  = (self.playerClass or "?") .. ":" .. (spec or "auto")
+  self.specToggles[key] = { unpack(spellList or {}) }
+
+  -- ensure saved states exist for each spell
+  self.db.profile.spellToggles = self.db.profile.spellToggles or {}
+  self.db.profile.spellToggles[key] = self.db.profile.spellToggles[key] or {}
+  local st = self.db.profile.spellToggles[key]
+  for _, name in ipairs(spellList or {}) do
+    if st[name] == nil then st[name] = true end  -- default ON
+  end
+
+  -- Feedback in chat
+  self:Printf(
+    "Registered %d toggle spell%s for spec [%s]",
+    #spellList or 0,
+    (#spellList == 1 and "" or "s"),
+    key
+  )
+  if #spellList > 0 then
+    DEFAULT_CHAT_FRAME:AddMessage("  " .. table.concat(spellList, ", "))
+  end
+
+  -- (Re)build the UI for the new spec
+  self:UIBuild()
+end
+
+
+-- Query toggle state in rotations
+function Tic:IsSpellEnabled(name)
+  local spec = self:GetSpecType()
+  local key  = (self.playerClass or "?") .. ":" .. (spec or "auto")
+  local tbl  = self.db.profile.spellToggles and self.db.profile.spellToggles[key]
+  return not tbl and true or tbl[name] ~= false
+end
+
+------------------------------------------------------------
+-- UI: frame + buttons
+------------------------------------------------------------
+local function GetSpecKey(self)
+  return (self.playerClass or "?") .. ":" .. (self:GetSpecType() or "auto")
+end
+
+function Tic:UIBuild()
+  -- Respect master toggle
+  if not (self.db and self.db.profile and self.db.profile.uiEnabled) then
+    if self.ui and self.ui.frame then self.ui.frame:Hide() end
+    return
+  end
+
+  -- one-time container
+  if not self.ui then self.ui = {} end
+  local f = self.ui.frame
+  if not f then
+    f = CreateFrame("Frame", "TicUI", UIParent)
+    f:SetMovable(true); f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetClampedToScreen(true)
+    f:SetBackdrop({
+      bgFile   = "Interface\\Tooltips\\UI-Tooltip-Background",
+      edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+      tile     = true, tileSize = 16, edgeSize = 12,
+      insets   = { left=3, right=3, top=3, bottom=3 }
+    })
+    f:SetBackdropColor(0,0,0,0.6)
+
+    -- Drag handlers + persist position
+    f:SetScript("OnDragStart", function(frame)
+      if not Tic.db.profile.uiLocked then frame:StartMoving() end
+    end)
+    f:SetScript("OnDragStop", function(frame)
+      frame:StopMovingOrSizing()
+      local point, _, rel, x, y = frame:GetPoint(1)
+      Tic.db.profile.uiPos = {
+        point = point or "CENTER",
+        rel   = rel   or "CENTER",
+        x     = x     or 0,
+        y     = y     or 0
+      }
+    end)
+
+    -- Title
+    local title = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    title:SetPoint("TOPLEFT", 8, -6)
+    title:SetText("Tic")
+    self.ui.title = title
+
+    -- Icon holder
+    local holder = CreateFrame("Frame", nil, f)
+    holder:SetPoint("TOPLEFT", 6, -22)
+    holder:SetPoint("BOTTOMRIGHT", -6, 6)
+    self.ui.holder = holder
+
+    self.ui.frame = f
+    f:Hide()
+  end
+
+  -- Restore saved position (or center)
+  self.db.profile.uiPos = self.db.profile.uiPos or { point="CENTER", rel="CENTER", x=0, y=0 }
+  local pos = self.db.profile.uiPos
+  f:ClearAllPoints()
+  f:SetPoint(pos.point, UIParent, pos.rel, pos.x, pos.y)
+
+  -- Label: CLASS – spec
+  local label = (self.playerClass or "?")
+  local spec  = self:GetSpecType()
+  if spec and spec ~= "auto" then label = label .. " – " .. spec end
+  self.ui.title:SetText(label)
+
+  -- Apply visual config
+  f:SetScale(self.db.profile.uiScale or 1)
+  f:SetAlpha(self.db.profile.uiAlpha or 1)
+
+  -- Resolve current spec list & toggle state
+  local key   = (self.playerClass or "?") .. ":" .. (self:GetSpecType() or "auto")
+  local list  = (self.specToggles and self.specToggles[key]) or {}
+  self.db.profile.spellToggles = self.db.profile.spellToggles or {}
+  self.db.profile.spellToggles[key] = self.db.profile.spellToggles[key] or {}
+  local state = self.db.profile.spellToggles[key]
+
+  -- Nuke old buttons
+  if self.ui.buttons then
+    for _, b in ipairs(self.ui.buttons) do b:Hide(); b:SetParent(nil) end
+  end
+  self.ui.buttons = {}
+
+  -- Layout math
+  local cols = self.db.profile.uiCols or 8
+  local size = self.db.profile.uiIcon or 32
+  local pad  = 4
+  local rows = math.ceil((#list > 0 and #list or 1) / cols) -- keep some height if empty
+  local w = cols*size + (cols-1)*pad + 12
+  local h = rows*size + (rows-1)*pad + 28
+  f:SetSize(math.max(120, w), math.max(40, h))
+
+  -- Build buttons
+  for i, spellName in ipairs(list) do
+    local b = CreateFrame("CheckButton", "TicUIToggle"..i, self.ui.holder)
+    b:SetSize(size, size)
+
+    local col = (i-1) % cols
+    local row = math.floor((i-1) / cols)
+    b:SetPoint("TOPLEFT", col*(size+pad), -row*(size+pad))
+
+    -- Icon
+    local sName, _, icon = GetSpellInfo(spellName)
+    local tex = b:CreateTexture(nil, "BACKGROUND")
+    tex:SetAllPoints(true)
+    tex:SetTexture(icon or "Interface\\Icons\\INV_Misc_QuestionMark")
+    b.icon = tex
+
+    -- Border glow when enabled
+    local glow = b:CreateTexture(nil, "OVERLAY")
+    glow:SetPoint("TOPLEFT", -2, 2)
+    glow:SetPoint("BOTTOMRIGHT", 2, -2)
+    glow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+    glow:SetBlendMode("ADD")
+    b.highlight = glow
+
+    -- Checked overlay
+    local chk = b:CreateTexture(nil, "ARTWORK")
+    chk:SetAllPoints(true)
+    chk:SetTexture("Interface\\Buttons\\CheckButtonHilight")
+    chk:SetBlendMode("ADD")
+    b:SetCheckedTexture(chk)
+
+    -- Initial state (default ON)
+    local enabled = (state[spellName] ~= false)
+    b:SetChecked(enabled)
+    if enabled then b.highlight:Show() else b.highlight:Hide() end
+
+    -- Tooltip
+    b:SetScript("OnEnter", function(selfBtn)
+      GameTooltip:SetOwner(selfBtn, "ANCHOR_RIGHT")
+      GameTooltip:SetText(sName or spellName, 1,1,1)
+      GameTooltip:AddLine("Click to enable/disable", 0.8,0.8,0.8)
+      GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    -- Click handler with chat feedback
+    b:SetScript("OnClick", function(selfBtn)
+      local on = selfBtn:GetChecked() and true or false
+      state[spellName] = on
+      if on then selfBtn.highlight:Show() else selfBtn.highlight:Hide() end
+      Tic:Printf("%s toggled %s for spec [%s]",
+        spellName,
+        on and "|cff00ff00ON|r" or "|cffff0000OFF|r",
+        key
+      )
+    end)
+
+    table.insert(self.ui.buttons, b)
+  end
+
+  -- Finally, show/hide the frame
+  if self.db.profile.uiEnabled then f:Show() else f:Hide() end
+end
+
+
+function Tic:UIResetAll()
+  -- restore defaults
+  self.db.profile.uiEnabled = true
+  self.db.profile.uiLocked  = false
+  self.db.profile.uiScale   = 1.0
+  self.db.profile.uiAlpha   = 1.0
+  self.db.profile.uiCols    = 8
+  self.db.profile.uiIcon    = 32
+  self.db.profile.uiPos     = { point = "CENTER", rel = "CENTER", x = 0, y = 0 }
+
+  -- rebuild & center
+  self:UIBuild()
+  if self.ui and self.ui.frame then
+    local f = self.ui.frame
+    f:ClearAllPoints()
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+    f:SetScale(self.db.profile.uiScale)
+    f:SetAlpha(self.db.profile.uiAlpha)
+    f:Show()
+  end
+
+  self:Printf("UI reset to defaults (centered, unlocked, scale=1, alpha=1, cols=8, icon=32).")
+end
+
+-- function Tic:UIResetPosition()
+--   if not (self.ui and self.ui.frame) then self:UIBuild() end
+--   if not (self.ui and self.ui.frame) then return end
+
+--   local f = self.ui.frame
+--   f:ClearAllPoints()
+--   f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+--   f:SetScale(self.db.profile.uiScale or 1)
+--   f:SetAlpha(self.db.profile.uiAlpha or 1)
+--   f:Show()
+
+--   self.db.profile.uiEnabled = true
+--   self.db.profile.uiLocked  = false
+--   self:Printf("UI reset to screen center. (Unlocked)")
+-- end
+
+local function SetVisible(region, state)
+  if state then region:Show() else region:Hide() end
+end
+
+-- Call when spec changes (we already call UIBuild in RegisterSpecToggles)
+function Tic:UIRefresh()
+  self:UIBuild()
+end
+
+--endregion ----    USERINTERFACE
+
+
+--region    ----    SLASHCOMMANDS
 function Tic:HandleSlash(msg)
   msg = trim(msg or "")
   local sub, rest = msg:match("^(%S+)%s*(.*)$")
@@ -432,6 +713,44 @@ function Tic:HandleSlash(msg)
       self:Printf("Usage: /tic spec [get|set <spec>|next|prev]")
     end
     return
+  end
+
+  if sub == "ui" then
+    local cmd, val = rest:match("^(%S*)%s*(.*)$"); cmd = (cmd or ""):lower()
+    if cmd == "" or cmd == "help" then
+      self:Printf("UI:")
+      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui show|hide|toggle")
+      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui lock|unlock")
+      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui scale <0.5..2.0>")
+      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui alpha <0.1..1.0>")
+      DEFAULT_CHAT_FRAME:AddMessage("  /tic ui cols <n>")
+      return
+    elseif cmd == "show" or cmd == "hide" or cmd == "toggle" then
+      if cmd == "toggle" then self.db.profile.uiEnabled = not self.db.profile.uiEnabled
+      else self.db.profile.uiEnabled = (cmd == "show") end
+      self:UIBuild()
+      self:Printf("UI %s", self.db.profile.uiEnabled and "shown" or "hidden")
+      return
+    elseif cmd == "lock" or cmd == "unlock" then
+      self.db.profile.uiLocked = (cmd == "lock")
+      self:Printf("UI is now %s", self.db.profile.uiLocked and "locked" or "unlocked")
+      return
+    elseif cmd == "scale" then
+      local n = tonumber(val); if not n then self:Printf("Usage: /tic ui scale <number>"); return end
+      self.db.profile.uiScale = n; self:UIBuild(); return
+    elseif cmd == "alpha" then
+      local n = tonumber(val); if not n then self:Printf("Usage: /tic ui alpha <0.1..1.0>"); return end
+      self.db.profile.uiAlpha = n; self:UIBuild(); return
+    elseif cmd == "cols" then
+      local n = tonumber(val); if not n then self:Printf("Usage: /tic ui cols <n>"); return end
+      self.db.profile.uiCols = max(1, floor(n)); self:UIBuild(); return
+    elseif cmd == "reset" then
+      self:UIResetAll()
+      return
+    else
+      self:Printf("Usage: /tic ui help")
+      return
+    end
   end
 
   if msg == "test" then
@@ -533,6 +852,8 @@ function Tic:HandlePx(rest)
 
   self:Printf("Unknown px cmd. /tic px help")
 end
+
+--endregion ----    SLASHCOMMANDS
 
 -- Exposed for Options.lua
 Tic._GetAddon = function() return Tic end

@@ -21,6 +21,17 @@ function Tic:_Init_DRUID()
   tic_bind_key("Wrath")
   tic_bind_key("Starfire")
   tic_bind_key("Starfall")
+
+  -- Make these appear as toggles in the UI (enable/disable per spell)
+  self:RegisterSpecToggles({
+    "Faerie Fire",
+    "Moonfire",
+    "Insect Swarm",
+    "Wrath",
+    "Starfire",
+    "Starfall",
+  })
+
   self._classInited.DRUID = true
 end
 
@@ -76,9 +87,9 @@ function Tic:_Update_DRUID(elapsed)
     elseif haveSolarEclipse then
       Tic_castSpellByName("Wrath")
       return
-    -- elseif not hasFaerieFire then
-    --   Tic_castSpellByName("Faerie Fire")
-    --   return
+    elseif not hasFaerieFire and self:IsSpellEnabled("Faerie Fire") then
+      Tic_castSpellByName("Faerie Fire")
+      return
     elseif not hasMoonfire then
       Tic_castSpellByName("Moonfire")
       return
@@ -88,7 +99,7 @@ function Tic:_Update_DRUID(elapsed)
     elseif starfallReady and hasMoonfire and hasInsectSwarm then
       Tic_castSpellByName("Starfall")
        return
-    elseif not haveLunarEclipse and hasMoonfire and hasInsectSwarm then
+    elseif not haveLunarEclipse and hasMoonfire and hasInsectSwarm and self:IsSpellEnabled("Wrath") then
       Tic_castSpellByName("Wrath")
       return
     else
