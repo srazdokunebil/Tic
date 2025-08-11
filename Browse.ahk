@@ -9,18 +9,18 @@ p3y := 8
 
 
 ; DEBUG
-;F5::{
-;	MsgBox "box1color " PixelGetColor(p1x, p1y)
-;}
-;F6::{
-;	MsgBox "box2color " PixelGetColor(p2x, p2y)
-;}
-;F7::{
-;	MsgBox "box3color " PixelGetColor(p2x, p2y)
-;}
-F9::{
-	MouseGetPos &MouseX, &MouseY
-	MsgBox "X" MouseX " Y" MouseY " " PixelGetColor(MouseX, MouseY)
+!F5::{
+	MsgBox "box1color " PixelGetColor(p1x, p1y)
+}
+!F6::{
+	MsgBox "box2color " PixelGetColor(p2x, p2y)
+}
+!F7::{
+	MsgBox "box3color " PixelGetColor(p2x, p2y)
+}
+!F9::{
+    MouseGetPos &mx, &my
+    MsgBox "X" mx " Y" my "  color " Format("0x{:06X}", PixelGetColor(mx, my, "RGB"))
 }
 
 Numpad6::{

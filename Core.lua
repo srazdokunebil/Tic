@@ -23,6 +23,11 @@ local defaults = {
     pxStrata = "TOOLTIP",
     pxGate = true,
 
+    pxGCDEnabled = true,   -- show the 4th pixel
+    pxGCDSize    = 8,
+    pxGCDOffsetX = 0,      -- extra tweak if you want to separate it
+    pxGCDOffsetY = 0,
+
     -- UI widget defaults
     uiEnabled = true,
     uiLocked  = false,
