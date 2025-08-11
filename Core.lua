@@ -16,12 +16,13 @@ local defaults = {
 
     -- Pixel beacon defaults
     pxEnabled = true,
-    pxSize = 8,       -- size in pixels
-    pxBaseX = 1,      -- screen X position of box1
-    pxBaseY = 1,      -- screen Y position of box1
-    pxSpacing = 8,    -- distance between boxes
+    pxSize = 12,       -- size in pixels
+    pxBaseX = 4,      -- screen X position of box1
+    pxBaseY = 4,      -- screen Y position of box1
+    pxSpacing = 16,    -- distance between boxes
     pxStrata = "TOOLTIP",
     pxGate = true,
+    pxAnchor = "TOPLEFT", -- or "BOTTOMLEFT"
 
     pxGCDEnabled = true,   -- show the 4th pixel
     pxGCDSize    = 8,
@@ -95,6 +96,37 @@ local function trim(s) return (s or ""):match("^%s*(.-)%s*$") end
 -- Build a stable key for saved vars and HUD lists (CLASS:SPEC)
 local function SpecKey(classToken, specToken)
   return (classToken or "?") .. ":" .. (specToken or "auto")
+end
+
+-- GCD helpers (Wrath)
+local function _GCDRemaining()
+  local start, dur = GetSpellCooldown(61304) -- 61304 = GCD "spell"
+  if not start or dur == 0 then return 0, 0 end
+  local rem = (start + dur) - GetTime()
+  if rem < 0 then rem = 0 end
+  return rem, dur
+end
+
+function Tic:_UpdateGCDPixel(elapsed)
+  if not (self.Pixel and self.db and self.db.profile and self.db.profile.pxGCDEnabled) then return end
+  self._gcdAccum = (self._gcdAccum or 0) + elapsed
+  if self._gcdAccum < 0.02 then return end  -- ~50 fps cap for the pixel
+  self._gcdAccum = 0
+
+  local rem, dur = _GCDRemaining()
+  local hex = "000000"
+  if rem > 0 and dur > 0 then
+    local pct = 1 - (rem / dur)  -- 0.0 at start of GCD → 1.0 at end
+    if pct < 0.33 then
+      hex = "0000FF"   -- early (blue)
+    elseif pct < 0.75 then
+      hex = "00FFFF"   -- mid (cyan)
+    else
+      hex = "FFFF00"   -- late (yellow)
+    end
+  end
+
+  self.Pixel:SetGCDPhase(hex)
 end
 
 -- Compute the pair for an index 1..36: returns hex2, hex3
@@ -653,18 +685,33 @@ function Tic:HandlePx(rest)
     DEFAULT_CHAT_FRAME:AddMessage("  /tic px on|off             - show/hide squares")
     DEFAULT_CHAT_FRAME:AddMessage("  /tic px gate on|off        - box1 white toggle")
     DEFAULT_CHAT_FRAME:AddMessage("  /tic px pos <x> <y>        - set base screen coords")
-    DEFAULT_CHAT_FRAME:AddMessage("  /tic px size <n>           - set square size")
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic px size <n>           - set square size (P1–P3)")
     DEFAULT_CHAT_FRAME:AddMessage("  /tic px spacing <n>        - set spacing between boxes")
     DEFAULT_CHAT_FRAME:AddMessage("  /tic px set <c2> <c3>      - set colors by name (white|yellow|magenta|cyan|red|blue|black)")
     DEFAULT_CHAT_FRAME:AddMessage("  /tic px defaults           - reset pos/size/spacing to defaults")
-    DEFAULT_CHAT_FRAME:AddMessage("  /tic px clear              - set all three pixels to black")
-    DEFAULT_CHAT_FRAME:AddMessage("  /tic px test               - quick cycle test")
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic px test               - quick cycle test (P2/P3)")
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic px p4 on|off          - show/hide the 4th pixel")
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic px p4size <n>         - set P4 size")
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic px p4pos <ox> <oy>    - set P4 offsets from the default spot")
+    DEFAULT_CHAT_FRAME:AddMessage("  /tic px p4test             - flash P4 through blue/cyan/yellow/black")
+    return
+  end
+
+  if a == "anchor" then
+    b = b:lower()
+    if b ~= "top" and b ~= "bottom" then
+      self:Printf("Usage: /tic px anchor top|bottom")
+      return
+    end
+    self.db.profile.pxAnchor = (b == "top") and "TOPLEFT" or "BOTTOMLEFT"
+    if self.Pixel then self.Pixel:ApplyPositions() end
+    self:Printf("Pixel anchor set to %s", self.db.profile.pxAnchor)
     return
   end
 
   if a == "on" or a == "off" then
     self.db.profile.pxEnabled = (a == "on")
-    self.Pixel:Show(self.db.profile.pxEnabled)
+    if self.Pixel then self.Pixel:Show(self.db.profile.pxEnabled) end
     self:Printf("Pixels: %s", a:upper())
     return
   end
@@ -672,7 +719,7 @@ function Tic:HandlePx(rest)
   if a == "gate" then
     b = b:lower()
     self.db.profile.pxGate = (b == "on")
-    self.Pixel:SetGate(self.db.profile.pxGate)
+    if self.Pixel then self.Pixel:SetGate(self.db.profile.pxGate) end
     self:Printf("Gate: %s", self.db.profile.pxGate and "ON" or "OFF")
     return
   end
@@ -681,21 +728,23 @@ function Tic:HandlePx(rest)
     local x,y = tonumber(b), tonumber(c)
     if not (x and y) then self:Printf("Usage: /tic px pos <x> <y>"); return end
     self.db.profile.pxBaseX, self.db.profile.pxBaseY = x, y
-    self.Pixel:ApplyPositions()
+    if self.Pixel then self.Pixel:ApplyPositions() end
     self:Printf("Pos set to %d,%d", x, y)
     return
   end
 
   if a == "size" then
     local n = tonumber(b); if not n then self:Printf("Usage: /tic px size <n>"); return end
-    self.db.profile.pxSize = n; self.Pixel:ApplySizes(); self.Pixel:ApplyPositions()
+    self.db.profile.pxSize = n
+    if self.Pixel then self.Pixel:ApplySizes(); self.Pixel:ApplyPositions() end
     self:Printf("Size = %d", n)
     return
   end
 
   if a == "spacing" then
     local n = tonumber(b); if not n then self:Printf("Usage: /tic px spacing <n>"); return end
-    self.db.profile.pxSpacing = n; self.Pixel:ApplyPositions()
+    self.db.profile.pxSpacing = n
+    if self.Pixel then self.Pixel:ApplyPositions() end
     self:Printf("Spacing = %d", n)
     return
   end
@@ -704,8 +753,49 @@ function Tic:HandlePx(rest)
     local c2, c3 = b:lower(), (c or ""):lower()
     local h2, h3 = colorNames[c2], colorNames[c3]
     if not (h2 and h3) then self:Printf("Bad colors. Try: white yellow magenta cyan red blue black"); return end
-    self.Pixel:SetPair(h2, h3)
+    if self.Pixel then self.Pixel:SetPair(h2, h3) end
     self:Printf("Set c2=%s c3=%s", c2, c3)
+    return
+  end
+
+  if a == "test" then
+    if self.Pixel then self.Pixel:TestCycle() end
+    return
+  end
+
+  -- ===== NEW: P4 commands =====
+  if a == "p4" then
+    b = (b or ""):lower()
+    if b == "on" or b == "off" then
+      self.db.profile.pxGCDEnabled = (b == "on")
+      self:Printf("P4: %s", self.db.profile.pxGCDEnabled and "ON" or "OFF")
+      return
+    elseif b == "p4size" or b == "size" then
+      local n = tonumber(c); if not n then self:Printf("Usage: /tic px p4size <n>"); return end
+      self.db.profile.pxGCDSize = n; if self.Pixel then self.Pixel:ApplySizes(); self.Pixel:ApplyPositions() end
+      self:Printf("P4 size = %d", n)
+      return
+    elseif b == "p4pos" or b == "pos" then
+      local ox, oy = tonumber((c or ""):match("^(%S+)%s*(%S*)$"))
+      if ox == nil or oy == nil then self:Printf("Usage: /tic px p4pos <ox> <oy>"); return end
+      self.db.profile.pxGCDOffsetX = ox; self.db.profile.pxGCDOffsetY = oy
+      if self.Pixel then self.Pixel:ApplyPositions() end
+      self:Printf("P4 offset = %d,%d", ox, oy)
+      return
+    elseif b == "p4test" or b == "test" then
+      if not self.Pixel then return end
+      -- flash P4 through phases: early (blue), mid (cyan), late (yellow), none (black)
+      local seq = { "0000FF", "00FFFF", "FFFF00", "000000" }
+      local i = 0
+      self:CancelTimer(self._p4testTimer); self._p4testTimer = nil
+      self._p4testTimer = self:ScheduleRepeatingTimer(function()
+        i = i + 1; if i > #seq then i = 1 end
+        if self.db.profile.pxGCDEnabled then self.Pixel:SetGCDPhase(seq[i]) end
+      end, 0.25)
+      self:Printf("P4 test cycling (blue→cyan→yellow→black). Use /reload or /tic px p4 off to stop.")
+      return
+    end
+    self:Printf("Usage: /tic px p4 on|off  |  p4size <n>  |  p4pos <ox> <oy>  |  p4test")
     return
   end
 
@@ -715,28 +805,14 @@ function Tic:HandlePx(rest)
     self.db.profile.pxBaseY   = d.baseY
     self.db.profile.pxSpacing = d.spacing
     self.db.profile.pxSize    = d.size
-    if self.Pixel then
-      self.Pixel:ApplySizes()
-      self.Pixel:ApplyPositions()
-    end
-    self:Printf("Pixel defaults applied: x=%d y=%d spacing=%d size=%d",
-      d.baseX, d.baseY, d.spacing, d.size)
-    return
-  end
-
-  if a == "clear" then
-    self:ClearPixels()
-    self:Printf("Pixels cleared (all black).")
-    return
-  end
-
-  if a == "test" then
-    self.Pixel:TestCycle()
+    if self.Pixel then self.Pixel:ApplySizes(); self.Pixel:ApplyPositions() end
+    self:Printf("Pixel defaults applied: x=%d y=%d spacing=%d size=%d", d.baseX, d.baseY, d.spacing, d.size)
     return
   end
 
   self:Printf("Unknown px cmd. /tic px help")
 end
+
 
 function Tic:GetSpecListForClass(eng) return self.ClassSpecs[eng or self.playerClass or ""] or {} end
 function Tic:GetSpecType() return (self.db and self.db.profile and self.db.profile.specType) or "auto" end
@@ -940,6 +1016,7 @@ function Tic:OnEnable()
     self._rotFrame = CreateFrame("Frame", "TicRotationFrame")
     self._rotFrame:SetScript("OnUpdate", function(_, elapsed)
       if self.UpdateForClass then self:UpdateForClass(elapsed) end
+      self:_UpdateGCDPixel(elapsed)
     end)
   end
   self._rotFrame:Show()

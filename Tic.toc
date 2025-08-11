@@ -23,8 +23,8 @@ Libs\Ace3\AceDBOptions-3.0\AceDBOptions-3.0.lua
 
 # Your addon
 Bindings.xml
-Core.lua
 Pixels.lua
+Core.lua
 Rotations.lua
 Options.lua
 Helpers.lua
