@@ -297,6 +297,25 @@ function tic_bind_key(spellName)
   return Tic and Tic.BindKey and Tic:BindKey(spellName)
 end
 
+function Tic:ListButtons()
+  local B = self.bindings
+  if not (B and B.list and #B.list > 0) then
+    self:Printf("No buttons/bindings have been created yet.")
+    return
+  end
+
+  self:Printf("=== Tic Buttons ===")
+  self:Printf("Idx  Key     Button           Spell")
+  for _, rec in ipairs(B.list) do
+    local idx   = rec.index or 0
+    local token = rec.token or "?"
+    local key   = "CTRL-"..token
+    local btn   = rec.button or ("TicBtn"..idx)
+    local spell = rec.spell or "(none)"
+    self:Printf("%2d   %-6s  %-16s %s", idx, key, btn, spell)
+  end
+end
+
 -- Class detection
 function Tic:GetPlayerClass() -- returns englishClass token (DRUID, etc)
   local _, eng = UnitClass("player")
@@ -857,6 +876,11 @@ function Tic:HandleSlash(msg)
     DEFAULT_CHAT_FRAME:AddMessage("  /tic px help                - pixel beacon help")
     DEFAULT_CHAT_FRAME:AddMessage("  /tic ui help                - HUD controls")
     DEFAULT_CHAT_FRAME:AddMessage("  /tic spec                   - show/set spec")
+    return
+  end
+
+  if sub == "listbuttons" or sub == "lb" then
+    Tic:ListButtons()
     return
   end
 

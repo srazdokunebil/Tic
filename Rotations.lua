@@ -62,7 +62,10 @@ function Tic:_Init_WARLOCK()
 
   -- Bindings (shared across specs for now)
   tic_bind_key("Corruption")
+  tic_bind_key("Unstable Affliction")
   tic_bind_key("Shadow Bolt")
+  tic_bind_key("Haunt")
+  tic_bind_key("Curse of Agony")
 
   -- Per‑spec HUD toggles
   self:RegisterSpecTogglesFor("WARLOCK", "dsr", { -- demo/sac/ruin (your nomenclature)
@@ -73,6 +76,9 @@ function Tic:_Init_WARLOCK()
   })
   self:RegisterSpecTogglesFor("WARLOCK", "sm", {  -- affliction? (your nomenclature)
     "Corruption",
+    "Unstable Affliction",
+    "Haunt",
+    "Curse of Agony",
     "Shadow Bolt",
   })
 
@@ -163,9 +169,19 @@ function Tic:_Update_WARLOCK(elapsed)
   elseif spec == "sm" then
     if not self:IsValidAttackableTarget() then Tic:ClearPixels() return end
     local hasCorruption = UnitDebuff("target", "Corruption")
-    if not hasCorruption then
-      Tic_castSpellByName("Corruption")
-    elseif hasCorruption then
+    local hasCurseOfAgony = UnitDebuff("target", "Curse of Agony")
+    local hasHaunt = UnitDebuff("target", "Haunt")
+    local hasUnstableAffliction = UnitDebuff("target", "Unstable Affliction")
+
+    if not hasUnstableAffliction then
+      Tic_castSpellByName("Unstable Affliction"); return
+    elseif not hasCorruption then
+      Tic_castSpellByName("Corruption"); return
+    elseif not hasHaunt then
+      Tic_castSpellByName("Haunt"); return
+    elseif not hasCurseOfAgony then
+      Tic_castSpellByName("Curse of Agony"); return
+    elseif hasCurseOfAgony and hasCorruption and hasHaunt then
       Tic_castSpellByName("Shadow Bolt"); return
     else
       Tic:ClearPixels()

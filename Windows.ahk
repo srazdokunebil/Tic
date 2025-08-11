@@ -8,10 +8,10 @@
 SetTitleMatchMode 2
 
 ; ----- Pixel coords (match your /tic px; P4 is to the right of P3) -----
-p1x := 12, p1y := 8
-p2x := 36, p2y := 8
-p3x := 58, p3y := 8
-p4x := 80, p4y := 8     ; adjust if you offset P4 in-game
+p1x := 19, p1y := 18
+p2x := 53, p2y := 17
+p3x := 82, p3y := 19
+p4x := 110, p4y := 16     ; adjust if you offset P4 in-game
 
 WOW_TITLE := "World of Warcraft"
 
@@ -217,6 +217,15 @@ Numpad6::{
 }
 
 ; ----- Debug pixel probe -----
+!F5::{
+	MsgBox "box1color " PixelGetColor(p1x, p1y)
+}
+!F6::{
+	MsgBox "box2color " PixelGetColor(p2x, p2y)
+}
+!F7::{
+	MsgBox "box3color " PixelGetColor(p2x, p2y)
+}
 F9::{
     MouseGetPos &mx, &my
     MsgBox "X" mx "  Y" my "  color " Format("0x{:06X}", PixelGetColor(mx, my, "RGB"))
