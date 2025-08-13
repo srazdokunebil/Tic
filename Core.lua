@@ -74,7 +74,7 @@ Tic_classes = {
 
 -- Class -> Spec tokens (map by class token)
 Tic.ClassSpecs = {
-  DEATHKNIGHT = { "blood","frost","unholy" },
+  DEATHKNIGHT = { "blood","frost","unholy","tank" },
   DRUID       = { "heal","mdps","rdps","tank" },
   HUNTER      = { "bm","mm","sv" },
   MAGE        = { "arcane","frost","fire" },
