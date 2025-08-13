@@ -93,22 +93,23 @@ end
 function Tic:_Init_DEATHKNIGHT()
   if self._classInited.DEATHKNIGHT then return end
   self:Printf("DEATHKNIGHT class initializing buttons")
-
-  local frost_deathKnightAbilities = {
-    "Icy Touch",
-    "Plague Strike",
-    "Pestilence",
-    "Frost Strike",
-    "Obliterate",
-    "Horn of Winter",
-    "Howling Blast",
-    "Blood Strike",
-    "Auto Attack",
-    "Unbreakable Armor"
-  }
+  
+  -- Bindings (shared across specs for now)
+    local deathKnightAbilities = {
+      "Icy Touch",
+      "Plague Strike",
+      "Pestilence",
+      "Frost Strike",
+      "Obliterate",
+      "Horn of Winter",
+      "Howling Blast",
+      "Blood Strike",
+      "Auto Attack",
+      "Unbreakable Armor"
+    }
 
   -- Bindings (shared across specs for now)
-  for i, abilityName in ipairs(frost_deathKnightAbilities) do -- Use the new variable name here
+  for i, abilityName in ipairs(deathKnightAbilities) do -- Use the new variable name here
     tic_bind_key(abilityName)
   end
   -- Register UI toggles PER SPEC so the HUD shows the right set on spec change
@@ -118,7 +119,7 @@ function Tic:_Init_DEATHKNIGHT()
   })
 
   -- mdps (feral cat) — placeholder
-  self:RegisterSpecTogglesFor("DEATHKNIGHT", "frost", frost_deathKnightAbilities) -- Use the new variable name here
+  self:RegisterSpecTogglesFor("DEATHKNIGHT", "frost", deathKnightAbilities) -- Use the new variable name here
 
   -- rdps (balance / moonkin)
   self:RegisterSpecTogglesFor("DEATHKNIGHT", "unholy", {
